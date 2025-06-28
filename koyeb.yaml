@@ -22,7 +22,7 @@ services:
       branch: main
       repository: github.com/Rohitcoder12/erome
     
-    # --- THIS IS THE CRITICAL SECTION ---
+    # --- THIS IS THE CRITICAL PART THAT FIXES THE ERROR ---
     # It tells Koyeb to install FFmpeg FIRST, then Python.
     buildpacks:
       - url: https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git
