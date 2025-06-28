@@ -2,6 +2,7 @@ import os
 import time
 import yt_dlp
 from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- Bot Configuration ---
 API_ID = int(os.environ.get("API_ID"))
@@ -36,16 +37,42 @@ def progress(current, total, *args):
     except Exception:
         pass
 
+# --- THIS IS THE UPDATED START COMMAND HANDLER ---
 @bot.on_message(filters.command("start") & filters.private)
 def start(client, message):
-    message.reply_text("Hello! I am a video downloader bot. Send me a link from a supported site to get started.")
+    # The new, more informative welcome message
+    start_text = """
+Hello! I am a video downloader bot powered by `yt-dlp`.
+
+I can download videos from **over 1,800 websites**, including:
+- YouTube, Twitter, TikTok, Instagram, Facebook
+- Xvideos, Pornhub, XNXX, xHamster, Erome
+- And many, many more news, social media, and educational sites.
+
+Just send me a link to get started!
+    """
+    # Create a button that links to the full list of sites
+    reply_markup = InlineKeyboardMarkup(
+        [[
+            InlineKeyboardButton(
+                "View Full List of Supported Sites",
+                url="https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md"
+            )
+        ]]
+    )
+    
+    message.reply_text(
+        text=start_text,
+        reply_markup=reply_markup,
+        disable_web_page_preview=True # Optional: keeps the message clean
+    )
+# ---------------------------------------------------
 
 @bot.on_message(filters.text & filters.private & ~filters.command("start"))
 def download_video(client, message):
     url = message.text
     sent_message = message.reply_text("⏳ `Processing your link...`")
     
-    # --- UPDATED YT-DLP OPTIONS WITH AGE LIMIT ---
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': 'downloads/%(title)s.%(ext)s',
@@ -57,12 +84,10 @@ def download_video(client, message):
             'key': 'EmbedThumbnail',
             'already_have_thumbnail': False,
         }],
-        
-        # -- THIS IS THE NEW LINE TO BYPASS AGE GATES --
         'age_limit': 21,
     }
 
-    filename = None  # Define filename before try block
+    filename = None
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -91,7 +116,6 @@ def download_video(client, message):
         bot.send_message(chat_id=DUMP_CHANNEL_ID, text=error_details)
 
     finally:
-        # Clean up local files after download/upload or failure
         if filename and os.path.exists(filename):
             os.remove(filename)
             thumbnail_file = filename.rsplit('.', 1)[0] + '.jpg'
