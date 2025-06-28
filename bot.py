@@ -2,27 +2,46 @@ import os
 import time
 import requests
 import asyncio
+import threading
 from yt_dlp import YoutubeDL
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from flask import Flask
 
-# --- Configuration (Read directly from environment variables) ---
+# --- Flask Web Server Setup ---
+# This part is to keep the bot alive on Koyeb's free Web Service tier.
+server = Flask(__name__)
+
+@server.route('/')
+def health_check():
+    """Health check endpoint to keep the service alive."""
+    return "Bot is alive!", 200
+
+def run_server():
+    """Runs the Flask server in a separate thread."""
+    # Get the port from the environment variable KOYEB_HTTP_PORT or default to 8080
+    port = int(os.environ.get('PORT', 8080))
+    server.run(host='0.0.0.0', port=port)
+
+# --- Bot Configuration ---
+# Read directly from environment variables provided by Koyeb
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID"))
+DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0)) # Default to 0 if not set
 DOWNLOAD_LOCATION = "./downloads/"
-
-# --- The rest of the code is exactly the same as before ---
 
 SUPPORTED_SITES = ["xvideos.com", "pornhub.com", "xnxx.com", "xhamster.com", "erome.com"]
 
+# --- Pyrogram Client ---
 app = Client(
     "video_downloader_bot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
+
+# --- Helper Functions (No changes here) ---
 
 def progress_hook(d, message: Message, start_time):
     if d['status'] == 'downloading':
@@ -54,6 +73,8 @@ async def upload_progress_callback(current, total, message: Message):
         except Exception:
             pass
 
+# --- Main Bot Logic (No changes here) ---
+
 @app.on_message(filters.private & filters.regex(r"https?://[^\s]+"))
 async def link_handler(client: Client, message: Message):
     url = message.text.strip()
@@ -79,23 +100,17 @@ async def link_handler(client: Client, message: Message):
         with YoutubeDL(ydl_opts) as ydl:
             globals()['last_update_time'] = time.time()
             info = ydl.extract_info(url, download=False)
-            
             video_title = info.get('title', 'Untitled Video')
-            file_ext = info.get('ext', 'mp4')
             webpage_url = info.get('webpage_url', url)
 
-            # Define path after getting info to use correct extension
             safe_title = "".join([c for c in video_title if c.isalpha() or c.isdigit() or c in ' ._-']).rstrip()
-            video_path = os.path.join(DOWNLOAD_LOCATION, f"{safe_title}.{file_ext}")
+            # Let yt-dlp determine the final extension
             ydl.download([url])
-
-            # In case ffmpeg merges files, find the final output file
-            # This is a robust way to handle it
-            if not os.path.exists(video_path):
-                 # yt-dlp might change the extension after merging
-                 possible_files = [f for f in os.listdir(DOWNLOAD_LOCATION) if f.startswith(safe_title)]
-                 if possible_files:
-                     video_path = os.path.join(DOWNLOAD_LOCATION, possible_files[0])
+            
+            # Find the downloaded file, as ffmpeg might change the extension
+            downloaded_files = [f for f in os.listdir(DOWNLOAD_LOCATION) if f.startswith(safe_title)]
+            if not downloaded_files: raise FileNotFoundError("Downloaded file not found.")
+            video_path = os.path.join(DOWNLOAD_LOCATION, downloaded_files[0])
 
         thumbnail_url = info.get('thumbnail')
         if thumbnail_url:
@@ -121,7 +136,7 @@ async def link_handler(client: Client, message: Message):
         
         await status_message.edit_text("✅ **Upload complete!**")
 
-        if sent_message and DUMP_CHANNEL_ID:
+        if sent_message and DUMP_CHANNEL_ID != 0:
             await sent_message.forward(DUMP_CHANNEL_ID)
             await status_message.edit_text("✅ **Upload complete and archived!**")
 
@@ -145,5 +160,12 @@ if __name__ == "__main__":
     if not os.path.exists(DOWNLOAD_LOCATION):
         os.makedirs(DOWNLOAD_LOCATION)
     
+    # Start the Flask server in a background thread
+    flask_thread = threading.Thread(target=run_server)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
     print("Bot is starting...")
+    # Start the Pyrogram bot. This will be the main blocking call.
     app.run()
+    print("Bot has stopped.")
