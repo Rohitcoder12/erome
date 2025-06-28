@@ -1,12 +1,11 @@
-# This file is the single source of truth for your Koyeb deployment.
-name: erome
+name: erome-downloader
 services:
-  - name: bot
+  - name: bot-worker
     instance_type: free
     git:
       branch: main
       repository: github.com/Rohitcoder12/erome
-    run_command: python bot.py # This is the command to start your bot.
+    run_command: python bot.py
     buildpacks:
       - url: https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git
       - url: heroku/python
