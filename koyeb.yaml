@@ -1,5 +1,5 @@
 # This file is the single source of truth for your Koyeb deployment.
-name: vj-video-player
+name: erome
 services:
   - name: bot
     instance_type: free
