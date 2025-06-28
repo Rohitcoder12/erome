@@ -2,13 +2,12 @@
 name: vj-video-player
 
 # Define the instance type and region.
-# This matches your current "Free" tier in Frankfurt.
 instances:
   - region: fra
     type: free
 
 # Define your environment variables.
-# Koyeb will automatically use the values you already set in the "Secrets" section.
+# Koyeb will use the values you set in the Secrets section of the dashboard.
 env:
   - key: API_ID
   - key: API_HASH
@@ -23,8 +22,8 @@ services:
       branch: main
       repository: github.com/Rohitcoder12/erome
     
-    # THIS IS THE MOST IMPORTANT PART
-    # We define the buildpacks here, in the correct order.
+    # --- THIS IS THE CRITICAL SECTION ---
+    # It tells Koyeb to install FFmpeg FIRST, then Python.
     buildpacks:
       - url: https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git
       - url: heroku/python
