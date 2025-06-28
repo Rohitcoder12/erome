@@ -1,170 +1,180 @@
-import logging
 import os
+import time
 import requests
-import uuid
-from bs4 import BeautifulSoup
+import asyncio
+from yt_dlp import YoutubeDL
+from pyrogram import Client, filters
+from pyrogram.types import Message
+from dotenv import load_dotenv
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+# Load environment variables from .env file
+load_dotenv()
 
-# --- CONFIGURATION ---
-# Replace 'YOUR_TELEGRAM_BOT_TOKEN' with the token you got from BotFather
-BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+# --- Configuration ---
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+DUMP_CHANNEL_ID = int(os.getenv("DUMP_CHANNEL_ID"))
+DOWNLOAD_LOCATION = "./downloads/"
 
-# --- NEW: DUMP CHANNEL CONFIGURATION ---
-# Replace with your channel's ID (e.g., -1001234567890). Leave as None to disable.
-# Your bot MUST be an admin in this channel.
-DUMP_CHANNEL_ID = None  # Example: -1001234567890
+# List of supported sites (domains)
+SUPPORTED_SITES = ["xvideos.com", "pornhub.com", "xnxx.com", "xhamster.com", "erome.com"]
 
-# --- SETUP ---
-
-# Enable logging to see errors and bot activity
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+# --- Pyrogram Client ---
+app = Client(
+    "video_downloader_bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
 )
-logger = logging.getLogger(__name__)
 
+# --- Helper Functions ---
 
-# --- SCRAPER FUNCTION ---
+# Progress hook for yt-dlp to show download status
+def progress_hook(d, message: Message, start_time):
+    if d['status'] == 'downloading':
+        total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate')
+        if total_bytes:
+            downloaded_bytes = d.get('downloaded_bytes')
+            speed = d.get('speed') or 0
+            eta = d.get('eta') or 0
+            percent = (downloaded_bytes / total_bytes) * 100
+            
+            # Throttle updates to avoid hitting Telegram API limits
+            now = time.time()
+            if now - start_time > 2: # Update every 2 seconds
+                try:
+                    # Non-blocking edit message
+                    asyncio.create_task(message.edit_text(
+                        f"**Downloading...**\n"
+                        f"**Progress:** {percent:.2f}%\n"
+                        f"**Speed:** {speed / 1024 / 1024:.2f} MB/s\n"
+                        f"**ETA:** {eta}s"
+                    ))
+                    globals()['last_update_time'] = now
+                except Exception:
+                    pass
 
-def get_erome_video_urls(album_url: str) -> list:
-    """
-    Scrapes an Erome album page to find direct video URLs.
-    """
-    video_urls = []
+# Progress callback for Pyrogram to show upload status
+async def upload_progress_callback(current, total, message: Message):
+    percent = (current / total) * 100
+    now = time.time()
+    
+    # Throttle updates
+    if now - globals().get('last_upload_update_time', 0) > 2:
+        try:
+            await message.edit_text(
+                f"**Uploading to Telegram...**\n"
+                f"**Progress:** {percent:.2f}%"
+            )
+            globals()['last_upload_update_time'] = now
+        except Exception:
+            pass
+
+# --- The Main Handler ---
+
+@app.on_message(filters.private & filters.regex(r"https?://[^\s]+"))
+async def link_handler(client: Client, message: Message):
+    url = message.text.strip()
+    
+    # Check if the URL is from a supported site
+    if not any(site in url for site in SUPPORTED_SITES):
+        await message.reply_text("❌ **Sorry, this website is not supported.**")
+        return
+
+    status_message = await message.reply_text("✅ **URL received. Starting process...**", quote=True)
+
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        # --- 1. Get Video Info & Download ---
+        await status_message.edit_text("🔄 **Fetching video metadata...**")
+        
+        ydl_opts = {
+            'format': 'best[ext=mp4][height<=720]/best[ext=mp4]/best', # Prioritize 720p mp4
+            'outtmpl': os.path.join(DOWNLOAD_LOCATION, '%(title)s.%(ext)s'),
+            'noplaylist': True,
+            'quiet': True,
+            'progress_hooks': [lambda d: progress_hook(d, status_message, globals().get('last_update_time', 0))]
         }
-        response = requests.get(album_url, headers=headers)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        video_tags = soup.find_all('video')
-        for video in video_tags:
-            source_tag = video.find('source')
-            if source_tag and source_tag.get('src'):
-                video_urls.append(source_tag['src'])
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching Erome page: {e}")
-        return []
+
+        with YoutubeDL(ydl_opts) as ydl:
+            globals()['last_update_time'] = time.time()
+            info = ydl.extract_info(url, download=False) # First, get info without downloading
+            
+            video_title = info.get('title', 'Untitled Video')
+            video_ext = info.get('ext', 'mp4')
+            thumbnail_url = info.get('thumbnail')
+            webpage_url = info.get('webpage_url', url)
+            
+            # Clean filename
+            safe_title = "".join([c for c in video_title if c.isalpha() or c.isdigit() or c in ' ._-']).rstrip()
+            video_path = os.path.join(DOWNLOAD_LOCATION, f"{safe_title}.{video_ext}")
+
+            ydl.download([url]) # Now, download the video
+
+        # --- 2. Download Thumbnail ---
+        thumbnail_path = None
+        if thumbnail_url:
+            thumbnail_path = os.path.join(DOWNLOAD_LOCATION, f"{safe_title}.jpg")
+            try:
+                with requests.get(thumbnail_url, stream=True) as r:
+                    r.raise_for_status()
+                    with open(thumbnail_path, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=8192):
+                            f.write(chunk)
+            except Exception as e:
+                print(f"Could not download thumbnail: {e}")
+                thumbnail_path = None # Reset if download fails
+        
+        # --- 3. Upload Video to User ---
+        await status_message.edit_text("⬆️ **Uploading to Telegram...**")
+        globals()['last_upload_update_time'] = time.time()
+        
+        caption = f"**Title:** {video_title}\n**Source:** {webpage_url}"
+
+        sent_message = await client.send_video(
+            chat_id=message.chat.id,
+            video=video_path,
+            caption=caption,
+            thumb=thumbnail_path,
+            file_name=f"{safe_title}.{video_ext}",
+            supports_streaming=True,
+            progress=upload_progress_callback,
+            progress_args=(status_message,)
+        )
+        
+        await status_message.edit_text("✅ **Upload complete!**")
+
+        # --- 4. Forward to Dump Channel ---
+        if sent_message:
+            await sent_message.forward(DUMP_CHANNEL_ID)
+            await status_message.edit_text("✅ **Upload complete and archived!**")
+
     except Exception as e:
-        logger.error(f"An unexpected error occurred during scraping: {e}")
-        return []
-    return video_urls
+        await status_message.edit_text(f"❌ **An error occurred:**\n`{e}`")
+    finally:
+        # --- 5. Cleanup ---
+        if 'video_path' in locals() and os.path.exists(video_path):
+            os.remove(video_path)
+        if 'thumbnail_path' in locals() and thumbnail_path and os.path.exists(thumbnail_path):
+            os.remove(thumbnail_path)
+        # We can delete the status message after a few seconds
+        await asyncio.sleep(5)
+        await status_message.delete()
 
 
-# --- TELEGRAM BOT HANDLERS ---
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sends a welcome message when the /start command is issued."""
-    await update.message.reply_text(
-        "Hi! I am the Erome Downloader Bot.\n\n"
-        "Send me a link to an Erome album (e.g., https://www.erome.com/a/albumId) "
-        "and I will download and send you the videos."
+@app.on_message(filters.command("start") & filters.private)
+async def start_command(client, message):
+    await message.reply_text(
+        "**Hello! I am a Video Downloader Bot.**\n\n"
+        "Send me a link from one of the supported sites, and I will download it for you.\n\n"
+        "**Supported Sites:**\n"
+        "• Pornhub\n• XVideos\n• XNXX\n• xHamster\n• Erome"
     )
 
-
-async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles messages containing Erome links."""
-    message_text = update.message.text
-    user = update.effective_user
-    chat_id = update.effective_chat.id
-
-    if "erome.com/a/" not in message_text:
-        await update.message.reply_text("This doesn't look like a valid Erome album link. Please send a link that starts with `https://www.erome.com/a/...`")
-        return
-
-    processing_message = await update.message.reply_text("🔗 Link received! Processing...")
-    video_urls = get_erome_video_urls(message_text)
-
-    if not video_urls:
-        await processing_message.edit_text("❌ No videos found on this page, or the page could not be accessed.")
-        return
-
-    await processing_message.edit_text(f"✅ Found {len(video_urls)} video(s). Starting download and upload process...")
-
-    for i, video_url in enumerate(video_urls, 1):
-        file_path = f"{uuid.uuid4()}.mp4"
-        
-        try:
-            await context.bot.send_message(chat_id, f"Downloading video {i} of {len(video_urls)}...")
-            
-            with requests.get(video_url, stream=True) as r:
-                r.raise_for_status()
-                with open(file_path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        f.write(chunk)
-            
-            # --- MODIFIED: Clearer message for file size limit ---
-            file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-            if file_size_mb > 49.5: # A little buffer
-                too_large_message = (
-                    f"⚠️ Video {i} is {file_size_mb:.2f} MB, which is larger than the 50 MB limit "
-                    f"for Telegram bots. I cannot upload this file."
-                )
-                await context.bot.send_message(chat_id, too_large_message)
-                # --- NEW: Send link to dump channel if it's too big for user ---
-                if DUMP_CHANNEL_ID:
-                    await context.bot.send_message(DUMP_CHANNEL_ID, f"File too large for user but here is the link:\n{video_url}")
-                continue
-
-            # --- NEW: Upload to Dump Channel First ---
-            if DUMP_CHANNEL_ID:
-                try:
-                    dump_caption = (
-                        f"Source: {message_text}\n"
-                        f"User: {user.first_name} (@{user.username}, ID: {user.id})"
-                    )
-                    with open(file_path, 'rb') as video_file:
-                        await context.bot.send_video(
-                            chat_id=DUMP_CHANNEL_ID, 
-                            video=video_file, 
-                            caption=dump_caption,
-                            supports_streaming=True
-                        )
-                except Exception as e:
-                    logger.error(f"Failed to send video to dump channel: {e}")
-                    # Optionally notify an admin
-                    # await context.bot.send_message(DUMP_CHANNEL_ID, f"Failed to log video. Error: {e}")
-
-            # --- Upload to User ---
-            await context.bot.send_message(chat_id, f"Uploading video {i} of {len(video_urls)}...")
-            with open(file_path, 'rb') as video_file:
-                await context.bot.send_video(chat_id=chat_id, video=video_file, supports_streaming=True)
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to download video {i}: {e}")
-            await context.bot.send_message(chat_id, f"❌ Failed to download video {i}.")
-        except Exception as e:
-            logger.error(f"An error occurred with video {i}: {e}")
-            await context.bot.send_message(chat_id, f"❌ An error occurred while processing video {i}.")
-        finally:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-
-    await context.bot.send_message(chat_id, "✨ All done!")
-
-
-# --- MAIN FUNCTION TO RUN THE BOT ---
-
-def main() -> None:
-    """Start the bot."""
-    if BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN":
-        print("!!! ERROR: Please replace 'YOUR_TELEGRAM_BOT_TOKEN' in the script with your actual bot token. !!!")
-        return
-
-    # --- NEW: Check for dump channel configuration ---
-    if DUMP_CHANNEL_ID:
-        print(f"✅ Dump channel is configured (ID: {DUMP_CHANNEL_ID}). Make sure the bot is an admin in this channel.")
-    else:
-        print("ℹ️ No dump channel configured. Videos will only be sent to users.")
-        
-    application = Application.builder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
-    print("Bot is running... Press Ctrl-C to stop.")
-    application.run_polling()
-
-
 if __name__ == "__main__":
-    main()
+    if not os.path.exists(DOWNLOAD_LOCATION):
+        os.makedirs(DOWNLOAD_LOCATION)
+    
+    print("Bot is starting...")
+    app.run()
+    print("Bot has stopped.")
