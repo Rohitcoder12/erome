@@ -1,5 +1,5 @@
 # This file configures your service on Koyeb.
-name: vj-video-player
+name: erome
 
 # Define the instance type and region.
 instances:
@@ -22,11 +22,11 @@ services:
       branch: main
       repository: github.com/Rohitcoder12/erome
     
-    # --- THIS IS THE CRITICAL PART THAT FIXES THE ERROR ---
+    # --- This is the most important part ---
     # It tells Koyeb to install FFmpeg FIRST, then Python.
     buildpacks:
       - url: https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git
       - url: heroku/python
 
-    # Define the command to start your bot.
+    # This replaces your Procfile.
     run_command: python bot.py
