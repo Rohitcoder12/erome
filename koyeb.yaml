@@ -1,32 +1,21 @@
-# This file configures your service on Koyeb.
-name: erome
-
-# Define the instance type and region.
-instances:
-  - region: fra
-    type: free
-
-# Define your environment variables.
-# Koyeb will use the values you set in the Secrets section of the dashboard.
-env:
-  - key: API_ID
-  - key: API_HASH
-  - key: BOT_TOKEN
-  - key: DUMP_CHANNEL_ID
-
-# Define the build and run configuration.
+# This file is the single source of truth for your Koyeb deployment.
+name: vj-video-player
 services:
   - name: bot
-    # Point to your GitHub repository.
+    instance_type: free
     git:
       branch: main
       repository: github.com/Rohitcoder12/erome
-    
-    # --- This is the most important part ---
-    # It tells Koyeb to install FFmpeg FIRST, then Python.
+    run_command: python bot.py # This is the command to start your bot.
     buildpacks:
       - url: https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git
       - url: heroku/python
-
-    # This replaces your Procfile.
-    run_command: python bot.py
+env:
+  - key: API_ID
+    scope: app
+  - key: API_HASH
+    scope: app
+  - key: BOT_TOKEN
+    scope: app
+  - key: DUMP_CHANNEL_ID
+    scope: app
