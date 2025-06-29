@@ -1,6 +1,4 @@
-pyrogram
-tgcrypto
-yt-dlp
+pyTelegramBotAPI
 requests
-Flask
-pymongo[srv]
+yt-dlp
+beautifulsoup4
