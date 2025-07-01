@@ -4,3 +4,4 @@ yt-dlp
 requests
 Flask
 pymongo[srv]
+Pillow
