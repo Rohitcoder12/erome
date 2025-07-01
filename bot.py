@@ -1,153 +1,172 @@
-# bot.py
-
 import os
+import time
 import requests
-import telebot
-import yt_dlp
-import subprocess
-from bs4 import BeautifulSoup
+import asyncio
+import threading
+import traceback # <-- Import the traceback module
+from yt_dlp import YoutubeDL
+from pyrogram import Client, filters
+from pyrogram.types import Message
+from flask import Flask
 
-# --- Configuration ---
-# Get the bot token from an environment variable for security
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-if not BOT_TOKEN:
-    print("Error: BOT_TOKEN environment variable not set.")
-    exit(1)
+# --- Flask Web Server Setup ---
+server = Flask(__name__)
+@server.route('/')
+def health_check():
+    return "Bot is alive!", 200
 
-bot = telebot.TeleBot(BOT_TOKEN)
+def run_server():
+    port = int(os.environ.get('PORT', 8080))
+    server.run(host='0.0.0.0', port=port)
 
-# --- Helper Functions ---
+# --- Bot Configuration ---
+API_ID = int(os.environ.get("API_ID"))
+API_HASH = os.environ.get("API_HASH")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
+DOWNLOAD_LOCATION = "./downloads/"
+SUPPORTED_SITES = ["xvideos.com", "pornhub.com", "xnxx.com", "xhamster.com", "erome.com"]
 
-def embed_thumbnail(video_path, thumbnail_path, output_path):
-    """
-    Embeds a thumbnail into a video file using FFmpeg.
-    Returns True on success, False on failure.
-    """
-    print(f"Embedding thumbnail '{thumbnail_path}' into '{video_path}'...")
-    
-    # FFmpeg command to create a new video with the embedded thumbnail
-    # -i video.mp4          -> Input video
-    # -i image.jpg          -> Input image
-    # -map 0                -> Map all streams from the first input (video)
-    # -map 1                -> Map all streams from the second input (image)
-    # -c copy               -> Copy codecs, don't re-encode (fast, preserves quality)
-    # -disposition:v:1 attached_pic -> Set the image as an "attached picture" (cover)
-    # output.mp4            -> The final output file
-    command = [
-        'ffmpeg',
-        '-i', video_path,
-        '-i', thumbnail_path,
-        '-map', '0',
-        '-map', '1',
-        '-c', 'copy',
-        '-disposition:v:1', 'attached_pic',
-        '-y', # Overwrite output file if it exists
-        output_path
-    ]
+# --- Pyrogram Client ---
+app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-    try:
-        # Run the command. We capture output to prevent spamming logs unless there's an error.
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
-        print(f"Successfully created video with embedded thumbnail: {output_path}")
-        return True
-    except subprocess.CalledProcessError as e:
-        # If FFmpeg fails, print the error for debugging
-        print(f"Error during FFmpeg processing.")
-        print(f"FFmpeg stdout: {e.stdout}")
-        print(f"FFmpeg stderr: {e.stderr}")
-        return False
-    except FileNotFoundError:
-        # This error happens if FFmpeg is not installed
-        print("ERROR: FFmpeg command not found. Make sure FFmpeg is installed and in your PATH.")
-        print("On Koyeb, ensure you have a 'packages.txt' file with 'ffmpeg' in it.")
-        return False
+# --- Helper Functions (Unchanged) ---
+def progress_hook(d, message: Message, start_time):
+    if d['status'] == 'downloading':
+        total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate')
+        if total_bytes:
+            downloaded_bytes = d.get('downloaded_bytes')
+            speed = d.get('speed') or 0
+            eta = d.get('eta') or 0
+            percent = (downloaded_bytes / total_bytes) * 100
+            now = time.time()
+            if now - globals().get('last_update_time', 0) > 2:
+                try:
+                    asyncio.create_task(message.edit_text(
+                        f"**Downloading...**\n"
+                        f"**Progress:** {percent:.2f}% | **Speed:** {speed / 1024 / 1024:.2f} MB/s | **ETA:** {eta}s"
+                    ))
+                    globals()['last_update_time'] = now
+                except Exception: pass
 
-# --- Telegram Bot Handlers ---
+async def upload_progress_callback(current, total, message: Message):
+    percent = (current / total) * 100
+    now = time.time()
+    if now - globals().get('last_upload_update_time', 0) > 2:
+        try:
+            await message.edit_text(f"**Uploading to Telegram...**\n**Progress:** {percent:.2f}%")
+            globals()['last_upload_update_time'] = now
+        except Exception: pass
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.reply_to(message, "Hello! Please send me an Erome album URL.")
+# --- Main Bot Logic (UPGRADED WITH DETAILED LOGGING) ---
+@app.on_message(filters.private & filters.regex(r"https?://[^\s]+"))
+async def link_handler(client: Client, message: Message):
+    url = message.text.strip()
+    print(f"[{message.chat.id}] Received URL: {url}") # <-- LOG
 
-@bot.message_handler(func=lambda message: True)
-def process_url(message):
-    url = message.text
-    chat_id = message.chat.id
-
-    # Check if the message text is a valid URL
-    if not url.startswith('http'):
-        bot.reply_to(message, "Please send a valid URL.")
+    if not any(site in url for site in SUPPORTED_SITES):
+        print(f"[{message.chat.id}] Unsupported site.") # <-- LOG
+        await message.reply_text("❌ **Sorry, this website is not supported.**")
         return
 
-    status_message = bot.send_message(chat_id, "🔗 Processing URL...")
+    status_message = await message.reply_text("✅ **URL received. Starting process...**", quote=True)
 
-    # Define file paths that will be used
-    album_name = "erome_download" # Default name
-    original_video_path = None
+    video_path = None
     thumbnail_path = None
-    final_video_path = None
-    
     try:
-        # 1. Scrape the page
-        bot.edit_message_text("📄 Scraping page for video info...", chat_id, status_message.message_id)
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
-
-        # Sanitize album name for use in filenames
-        album_name_tag = soup.find('h1', class_='album-title')
-        if album_name_tag:
-            album_name = "".join(c for c in album_name_tag.text.strip() if c.isalnum() or c in (' ', '_')).rstrip()
-
-        thumbnail_url = soup.find('img', class_='img-responsive')['src']
-        video_url = soup.find('video', id='video-player').find('source')['src']
-
-        # 2. Download Video
-        bot.edit_message_text(f"📥 Downloading video: {album_name}", chat_id, status_message.message_id)
-        ydl_opts = {'outtmpl': f'{album_name}.%(ext)s'}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=True)
-            original_video_path = ydl.prepare_filename(info)
-
-        # 3. Download Thumbnail
-        bot.edit_message_text("🖼️ Downloading thumbnail...", chat_id, status_message.message_id)
-        thumb_response = requests.get(thumbnail_url)
-        thumbnail_path = f"{album_name}.jpg"
-        with open(thumbnail_path, 'wb') as f:
-            f.write(thumb_response.content)
-
-        # 4. Embed Thumbnail with FFmpeg
-        bot.edit_message_text("✨ Embedding thumbnail into video...", chat_id, status_message.message_id)
-        file_extension = os.path.splitext(original_video_path)[1]
-        final_video_path = f"{album_name}_final{file_extension}"
+        await status_message.edit_text("🔄 **Fetching video metadata...**")
+        print(f"[{message.chat.id}] Fetching metadata from yt-dlp...") # <-- LOG
         
-        success = embed_thumbnail(original_video_path, thumbnail_path, final_video_path)
-        if not success:
-            # If embedding fails, send a warning and prepare to send the original video
-            bot.send_message(chat_id, "⚠️ Warning: Failed to embed thumbnail. FFmpeg might not be installed correctly. Sending original video.")
-            final_video_path = original_video_path # Fallback to the original video
+        ydl_opts = {
+            'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'outtmpl': os.path.join(DOWNLOAD_LOCATION, '%(title)s.%(ext)s'),
+            'noplaylist': True, 'quiet': True,
+            'progress_hooks': [lambda d: progress_hook(d, status_message, globals().get('last_update_time', 0))],
+            # 'max_filesize': 50 * 1024 * 1024, # <-- Optional: Uncomment this line to test with small files
+        }
 
-        # 5. Upload the final video
-        bot.edit_message_text("⬆️ Uploading to Telegram...", chat_id, status_message.message_id)
-        with open(final_video_path, 'rb') as video_file:
-            bot.send_video(chat_id, video_file, supports_streaming=True)
+        with YoutubeDL(ydl_opts) as ydl:
+            globals()['last_update_time'] = time.time()
+            info = ydl.extract_info(url, download=False)
+            video_title = info.get('title', 'Untitled Video')
+            webpage_url = info.get('webpage_url', url)
+            print(f"[{message.chat.id}] Metadata found. Title: {video_title}") # <-- LOG
+
+            safe_title = "".join([c for c in video_title if c.isalpha() or c.isdigit() or c in ' ._-']).rstrip()
+            
+            print(f"[{message.chat.id}] Starting download...") # <-- LOG
+            ydl.download([url])
+            print(f"[{message.chat.id}] Download function finished.") # <-- LOG
+            
+            downloaded_files = [f for f in os.listdir(DOWNLOAD_LOCATION) if f.startswith(safe_title)]
+            if not downloaded_files:
+                print(f"[{message.chat.id}] ERROR: File not found after download!") # <-- LOG
+                raise FileNotFoundError("Downloaded file not found in the directory.")
+            
+            video_path = os.path.join(DOWNLOAD_LOCATION, downloaded_files[0])
+            print(f"[{message.chat.id}] Video path identified: {video_path}") # <-- LOG
+
+        thumbnail_url = info.get('thumbnail')
+        if thumbnail_url:
+            thumbnail_path = os.path.join(DOWNLOAD_LOCATION, f"{safe_title}.jpg")
+            print(f"[{message.chat.id}] Downloading thumbnail from {thumbnail_url}") # <-- LOG
+            try:
+                with requests.get(thumbnail_url, stream=True) as r:
+                    r.raise_for_status()
+                    with open(thumbnail_path, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
+            except Exception as e:
+                print(f"[{message.chat.id}] Could not download thumbnail: {e}") # <-- LOG
+                thumbnail_path = None
         
-        # Delete the status message after success
-        bot.delete_message(chat_id, status_message.message_id)
+        await status_message.edit_text("⬆️ **Uploading to Telegram...**")
+        print(f"[{message.chat.id}] Starting upload of {video_path} to Telegram.") # <-- LOG
+        globals()['last_upload_update_time'] = time.time()
+        
+        caption = f"**Title:** {video_title}\n**Source:** {webpage_url}"
+
+        sent_message = await client.send_video(
+            chat_id=message.chat.id, video=video_path, caption=caption, thumb=thumbnail_path,
+            supports_streaming=True, progress=upload_progress_callback, progress_args=(status_message,)
+        )
+        print(f"[{message.chat.id}] Upload to user successful.") # <-- LOG
+        
+        await status_message.edit_text("✅ **Upload complete!**")
+
+        if sent_message and DUMP_CHANNEL_ID != 0:
+            print(f"[{message.chat.id}] Forwarding message to dump channel: {DUMP_CHANNEL_ID}") # <-- LOG
+            await sent_message.forward(DUMP_CHANNEL_ID)
+            await status_message.edit_text("✅ **Upload complete and archived!**")
 
     except Exception as e:
-        print(f"An error occurred: {e}")
-        bot.edit_message_text(f"❌ An error occurred: {e}", chat_id, status_message.message_id)
-
+        # ---- THIS IS THE MOST IMPORTANT CHANGE ----
+        # It will print the full, detailed error to your logs
+        print("\n\n------ ERROR ------\n")
+        traceback.print_exc()
+        print("\n------ END ERROR ------\n\n")
+        await status_message.edit_text(f"❌ **An error occurred during the process.**\n\nPlease check the logs for details.")
     finally:
-        # 6. Clean up all temporary files, regardless of success or failure
-        print("Cleaning up local files...")
-        for f in [original_video_path, thumbnail_path, final_video_path]:
-            if f and os.path.exists(f):
-                os.remove(f)
-                print(f"Removed {f}")
+        print(f"[{message.chat.id}] Starting cleanup process.") # <-- LOG
+        if video_path and os.path.exists(video_path):
+            os.remove(video_path)
+            print(f"[{message.chat.id}] Cleaned up video file: {video_path}") # <-- LOG
+        if thumbnail_path and os.path.exists(thumbnail_path):
+            os.remove(thumbnail_path)
+            print(f"[{message.chat.id}] Cleaned up thumbnail file: {thumbnail_path}") # <-- LOG
+        await asyncio.sleep(5)
+        await status_message.delete()
 
+@app.on_message(filters.command("start") & filters.private)
+async def start_command(client, message):
+    await message.reply_text("Hello! I am a Video Downloader Bot.")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    if not os.path.exists(DOWNLOAD_LOCATION):
+        os.makedirs(DOWNLOAD_LOCATION)
+    
+    flask_thread = threading.Thread(target=run_server)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
     print("Bot is starting...")
-    bot.polling(non_stop=True)
+    app.run()
