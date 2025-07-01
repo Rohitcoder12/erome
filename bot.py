@@ -1,19 +1,19 @@
-# bot.py
 import os
 import time
 import requests
 import asyncio
 import threading
 import traceback
+import io # <-- New import for in-memory file handling
 from yt_dlp import YoutubeDL
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from flask import Flask
 from pymongo import MongoClient
-from datetime import datetime, timezone # <-- Changed import
+from datetime import datetime, timezone
+from PIL import Image # <-- New import for Pillow
 
 # --- Configuration ---
-# You will set these in the Render Environment Variables
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -22,15 +22,12 @@ DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
 DOWNLOAD_LOCATION = "./downloads/"
 SUPPORTED_SITES = ["xvideos.com", "pornhub.com", "xnxx.com", "xhamster.com", "erome.com"]
 
-# --- Flask Web Server Setup (to keep Render service alive) ---
+# --- Flask Web Server Setup ---
 server = Flask(__name__)
-
 @server.route('/')
 def health_check():
     return "Bot and Web Server are alive!", 200
-
 def run_server():
-    # This function will be run in a separate thread
     port = int(os.environ.get('PORT', 8080))
     server.run(host='0.0.0.0', port=port)
 
@@ -42,13 +39,12 @@ try:
     print("Successfully connected to MongoDB.")
 except Exception as e:
     print(f"Error connecting to MongoDB: {e}")
-    # You might want to exit or handle this error appropriately
     users_collection = None
 
 # --- Pyrogram Client ---
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- Helper Functions ---
+# --- Helper Functions (No Changes) ---
 def progress_hook(d, message: Message, start_time):
     if d['status'] == 'downloading':
         total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate')
@@ -60,15 +56,9 @@ def progress_hook(d, message: Message, start_time):
             now = time.time()
             if now - globals().get('last_update_time', 0) > 2:
                 try:
-                    # Use asyncio.create_task for fire-and-forget
-                    asyncio.create_task(message.edit_text(
-                        f"**Downloading...**\n"
-                        f"**Progress:** {percent:.2f}% | **Speed:** {speed / 1024 / 1024:.2f} MB/s | **ETA:** {eta}s"
-                    ))
+                    asyncio.create_task(message.edit_text(f"**Downloading...**\n**Progress:** {percent:.2f}% | **Speed:** {speed / 1024 / 1024:.2f} MB/s | **ETA:** {eta}s"))
                     globals()['last_update_time'] = now
-                except Exception:
-                    pass
-
+                except Exception: pass
 async def upload_progress_callback(current, total, message: Message):
     percent = (current / total) * 100
     now = time.time()
@@ -76,136 +66,111 @@ async def upload_progress_callback(current, total, message: Message):
         try:
             await message.edit_text(f"**Uploading to Telegram...**\n**Progress:** {percent:.2f}%")
             globals()['last_upload_update_time'] = now
-        except Exception:
-            pass
+        except Exception: pass
 
 # --- Bot Commands & Handlers ---
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     user = message.from_user
-    # --- NEW FEATURE: Add/Update user in database ---
     if users_collection is not None:
-        user_data = {
-            "_id": user.id,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "username": user.username,
-            "last_started": datetime.now(timezone.utc) # <-- Corrected datetime usage
-        }
+        user_data = {"_id": user.id, "first_name": user.first_name, "last_name": user.last_name, "username": user.username, "last_started": datetime.now(timezone.utc)}
         try:
             users_collection.update_one({"_id": user.id}, {"$set": user_data}, upsert=True)
             print(f"User {user.id} ({user.first_name}) saved to DB.")
         except Exception as e:
             print(f"Error saving user to DB: {e}")
-    # -----------------------------------------------
     await message.reply_text("Hello! I am a Video Downloader Bot. Send me a supported link to get started.")
 
 @app.on_message(filters.private & filters.regex(r"https?://[^\s]+"))
 async def link_handler(client: Client, message: Message):
     url = message.text.strip()
-    print(f"[{message.chat.id}] Received URL: {url}")
-
     if not any(site in url for site in SUPPORTED_SITES):
-        print(f"[{message.chat.id}] Unsupported site.")
         await message.reply_text("❌ **Sorry, this website is not supported.**")
         return
 
     status_message = await message.reply_text("✅ **URL received. Starting process...**", quote=True)
-
     video_path = None
     thumbnail_path = None
     try:
         await status_message.edit_text("🔄 **Fetching video metadata...**")
-        print(f"[{message.chat.id}] Fetching metadata from yt-dlp...")
-        
         ydl_opts = {
             'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             'outtmpl': os.path.join(DOWNLOAD_LOCATION, '%(title)s.%(ext)s'),
             'noplaylist': True, 'quiet': True,
             'progress_hooks': [lambda d: progress_hook(d, status_message, time.time())],
+            'max_filesize': 450 * 1024 * 1024, # Limit files to 450 MB
         }
 
         with YoutubeDL(ydl_opts) as ydl:
-            globals()['last_update_time'] = time.time()
             info = ydl.extract_info(url, download=False)
             video_title = info.get('title', 'Untitled Video')
             webpage_url = info.get('webpage_url', url)
-            print(f"[{message.chat.id}] Metadata found. Title: {video_title}")
-
             safe_title = "".join([c for c in video_title if c.isalpha() or c.isdigit() or c in ' ._-']).rstrip()
             
-            print(f"[{message.chat.id}] Starting download...")
+            print(f"[{message.chat.id}] Starting download for: {video_title}")
             ydl.download([url])
-            print(f"[{message.chat.id}] Download function finished.")
-            
             downloaded_files = [f for f in os.listdir(DOWNLOAD_LOCATION) if f.startswith(safe_title)]
             if not downloaded_files:
-                print(f"[{message.chat.id}] ERROR: File not found after download!")
-                raise FileNotFoundError("Downloaded file not found in the directory.")
-            
+                raise FileNotFoundError("Downloaded file not found.")
             video_path = os.path.join(DOWNLOAD_LOCATION, downloaded_files[0])
-            print(f"[{message.chat.id}] Video path identified: {video_path}")
 
+        # --- NEW AND IMPROVED THUMBNAIL LOGIC ---
         thumbnail_url = info.get('thumbnail')
         if thumbnail_url:
-            thumbnail_path = os.path.join(DOWNLOAD_LOCATION, f"{safe_title}.jpg")
             print(f"[{message.chat.id}] Downloading thumbnail from {thumbnail_url}")
             try:
-                with requests.get(thumbnail_url, stream=True) as r:
-                    r.raise_for_status()
-                    with open(thumbnail_path, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
+                # Download image data using requests
+                response = requests.get(thumbnail_url)
+                response.raise_for_status() # Raise an exception for bad status codes
+
+                # Use Pillow to open the image from memory and save as JPEG
+                img_data = io.BytesIO(response.content)
+                with Image.open(img_data) as img:
+                    thumbnail_path = os.path.join(DOWNLOAD_LOCATION, f"{safe_title}.jpg")
+                    img.convert("RGB").save(thumbnail_path, "jpeg")
+                print(f"[{message.chat.id}] Thumbnail successfully saved to {thumbnail_path}")
+
             except Exception as e:
-                print(f"[{message.chat.id}] Could not download thumbnail: {e}")
-                thumbnail_path = None
+                print(f"[{message.chat.id}] Could not process thumbnail: {e}")
+                thumbnail_path = None # Ensure path is None if it fails
+        # --- END OF NEW THUMBNAIL LOGIC ---
         
         await status_message.edit_text("⬆️ **Uploading to Telegram...**")
-        print(f"[{message.chat.id}] Starting upload of {video_path} to Telegram.")
-        globals()['last_upload_update_time'] = time.time()
-        
-        caption = f"**Title:** {video_title}\n**Source:** {webpage_url}"
-
         sent_message = await client.send_video(
-            chat_id=message.chat.id, video=video_path, caption=caption, thumb=thumbnail_path,
-            supports_streaming=True, progress=upload_progress_callback, progress_args=(status_message,)
+            chat_id=message.chat.id, video=video_path,
+            caption=f"**Title:** {video_title}\n**Source:** {webpage_url}",
+            thumb=thumbnail_path,
+            supports_streaming=True,
+            progress=upload_progress_callback, progress_args=(status_message,)
         )
-        print(f"[{message.chat.id}] Upload to user successful.")
-        
         await status_message.edit_text("✅ **Upload complete!**")
-
         if sent_message and DUMP_CHANNEL_ID != 0:
-            print(f"[{message.chat.id}] Forwarding message to dump channel: {DUMP_CHANNEL_ID}")
             await sent_message.forward(DUMP_CHANNEL_ID)
             await status_message.edit_text("✅ **Upload complete and archived!**")
-
     except Exception as e:
+        error_message = f"❌ An error occurred: {type(e).__name__}"
+        if "is larger than" in str(e):
+             error_message = "❌ **Error:** Video is too large to download on the free plan."
         print("\n\n------ ERROR ------\n")
         traceback.print_exc()
         print("\n------ END ERROR ------\n\n")
-        await status_message.edit_text(f"❌ **An error occurred during the process.**\n\nPlease check the logs for details.")
+        await status_message.edit_text(error_message)
     finally:
-        print(f"[{message.chat.id}] Starting cleanup process.")
-        if video_path and os.path.exists(video_path):
-            os.remove(video_path)
-            print(f"[{message.chat.id}] Cleaned up video file: {video_path}")
-        if thumbnail_path and os.path.exists(thumbnail_path):
-            os.remove(thumbnail_path)
-            print(f"[{message.chat.id}] Cleaned up thumbnail file: {thumbnail_path}")
+        if video_path and os.path.exists(video_path): os.remove(video_path)
+        if thumbnail_path and os.path.exists(thumbnail_path): os.remove(thumbnail_path)
         await asyncio.sleep(5)
-        await status_message.delete()
+        try:
+            await status_message.delete()
+        except Exception:
+            pass
 
 # --- Main Entry Point ---
 if __name__ == "__main__":
     if not os.path.exists(DOWNLOAD_LOCATION):
         os.makedirs(DOWNLOAD_LOCATION)
-
-    # Start the Flask server in a separate thread
     print("Starting web server thread...")
     flask_thread = threading.Thread(target=run_server)
     flask_thread.daemon = True
     flask_thread.start()
-    
-    # Start the Pyrogram bot in the main thread
     print("Starting Pyrogram bot...")
     app.run()
-    print("Bot has stopped.")
