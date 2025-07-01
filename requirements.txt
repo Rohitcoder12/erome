@@ -1,4 +1,6 @@
-pyTelegramBotAPI
-requests
+pyrogram
+tgcrypto
 yt-dlp
-beautifulsoup4
+requests
+Flask
+pymongo[srv]
