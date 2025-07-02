@@ -109,7 +109,16 @@ async def handle_erome_album(url, message, status_message):
     album_limit = 10; user_id = message.from_user.id
     await status_message.edit_text("🔎 This looks like an Erome album. Checking for content...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     
-    meta_opts = {'quiet': True, 'playlistend': album_limit}
+    # FIX: Add retries and a browser user-agent to handle Erome's slow loading and blocking
+    meta_opts = {
+        'quiet': True, 
+        'playlistend': album_limit,
+        'retries': 5,
+        'socket_timeout': 30,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36',
+        }
+    }
     try:
         with YoutubeDL(meta_opts) as ydl: info = ydl.extract_info(url, download=False)
     except Exception as e:
@@ -117,9 +126,15 @@ async def handle_erome_album(url, message, status_message):
         return
 
     entries = info.get('entries', [])
-    unique_entries = [dict(t) for t in {tuple(d.items()) for d in entries}]
+    # FIX: De-duplicate entries based on URL to prevent the doubling issue
+    unique_entries = []
+    seen_urls = set()
+    for entry in entries:
+        if entry and 'url' in entry and entry['url'] not in seen_urls:
+            unique_entries.append(entry)
+            seen_urls.add(entry['url'])
+            
     if not unique_entries: await status_message.edit_text("❌ No content found in this Erome album."); return
-    
     content_count = len(unique_entries)
     await status_message.edit_text(f"✅ Album found with **{content_count}** items (limit is {album_limit}).\nProcessing one by one...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     await asyncio.sleep(2)
@@ -130,8 +145,7 @@ async def handle_erome_album(url, message, status_message):
         item_title = entry.get('title', 'Untitled Item')
         await status_message.edit_text(f"Processing item {i}/{content_count}: *{item_title}*", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
         
-        # If vcodec is 'none', it's an image. Otherwise, it's a video.
-        if entry.get('vcodec') == 'none':
+        if entry.get('vcodec') == 'none' or not entry.get('vcodec'):
             await download_and_send_photo(entry, message, status_message)
         else:
             await download_and_send_video(entry, message, status_message)
@@ -146,7 +160,7 @@ async def download_and_send_photo(entry, message, status_message):
     photo_title = entry.get('title', 'Untitled Photo')
     try:
         await message.reply_photo(photo=photo_url, caption=photo_title)
-        await asyncio.sleep(1)
+        await asyncio.sleep(1) # Brief pause to avoid flooding
     except Exception as e:
         print(f"Failed to send photo {photo_url}: {e}")
         await message.reply_text(f"⚠️ Could not send photo: {photo_title}")
@@ -160,20 +174,21 @@ async def download_and_send_video(entry, message, status_message):
     try:
         with requests.get(video_url, stream=True) as r:
             r.raise_for_status()
-            total_length = int(r.headers.get('content-length'))
+            total_length = int(r.headers.get('content-length', 0))
             downloaded = 0
             with open(file_path, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
                     if user_id in CANCELLATION_REQUESTS: raise Exception("Download cancelled by user.")
                     downloaded += len(chunk)
                     f.write(chunk)
-                    # Custom progress reporting for requests
-                    percent = (downloaded / total_length) * 100
-                    if (time.time() - globals().get('last_update_time', 0)) > 2:
-                        try:
-                            await status_message.edit_text(f"⏳ **Downloading Album Video...**\n`{video_title}`\n{create_progress_bar(percent)} {percent:.2f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
-                            globals()['last_update_time'] = time.time()
-                        except: pass
+                    # Only show progress if we know the total size
+                    if total_length > 0:
+                        percent = (downloaded / total_length) * 100
+                        if (time.time() - globals().get('last_update_time', 0)) > 2:
+                            try:
+                                await status_message.edit_text(f"⏳ **Downloading Album Video...**\n`{video_title}`\n{create_progress_bar(percent)} {percent:.2f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+                                globals()['last_update_time'] = time.time()
+                            except: pass
         
         await status_message.edit_text("⬆️ **Uploading to Telegram...**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
         await app.send_video(chat_id=user_id, video=file_path, caption=video_title, supports_streaming=True, progress=upload_progress_callback, progress_args=(status_message, user_id))
@@ -182,12 +197,10 @@ async def download_and_send_video(entry, message, status_message):
         print(f"Failed to process album video {video_url}: {e}")
         await message.reply_text(f"⚠️ Could not process video: `{video_title}`")
     finally:
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        if os.path.exists(file_path): os.remove(file_path)
 
 async def process_video_url(url, ydl_opts, original_message, status_message, is_album_item=False):
-    # This function is now only for NON-EROME sites.
-    # The rest of the logic is unchanged and preserved for stability.
+    # This function is now only for NON-EROME sites. It is unchanged.
     video_path, thumbnail_path = None, None; user_id = original_message.from_user.id; download_log_id = ObjectId()
     if downloads_collection is not None: downloads_collection.insert_one({"_id": download_log_id, "user_id": user_id, "url": url, "status": "processing", "start_time": datetime.now(timezone.utc)})
     try:
