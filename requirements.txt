@@ -1,8 +1,7 @@
 pyrogram
 tgcrypto
-yt-dlp>=2023.12.30
+yt-dlp
 requests
 Flask
 pymongo[srv]
 Pillow
-playwright
