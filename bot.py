@@ -17,7 +17,7 @@ from playwright.async_api import async_playwright
 
 # --- Configuration (Your settings are preserved) ---
 API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH"))
+API_HASH = os.environ.get("API_HASH") # <-- FIXED: Extra parenthesis removed
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
