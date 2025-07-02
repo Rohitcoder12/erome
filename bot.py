@@ -101,22 +101,40 @@ async def link_handler(client: Client, message: Message):
         CANCELLATION_REQUESTS.discard(user_id)
         DOWNLOAD_IN_PROGRESS = False
 
+# --- MODIFIED SINGLE VIDEO HANDLER ---
 async def handle_single_video(url, message, status_message):
-    ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(title)s.%(ext)s'),'noplaylist':True,'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,message.from_user.id)],'max_filesize':450*1024*1024}
+    ydl_opts = {
+        'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': os.path.join(DOWNLOAD_LOCATION, '%(title)s.%(ext)s'),
+        'noplaylist': True,
+        'quiet': True,
+        'progress_hooks': [lambda d: progress_hook(d, status_message, message.from_user.id)],
+        'max_filesize': 450 * 1024 * 1024,
+        # FIX: Add a user-agent to avoid being blocked by some sites
+        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36'}
+    }
     await process_video_url(url, ydl_opts, message, status_message)
 
-# --- MODIFIED EROME HANDLER (NOW SUPPORTS VIDEOS & IMAGES) ---
+# --- MODIFIED EROME HANDLER (WITH 404 CHECK) ---
 async def handle_erome_album_with_playwright(url, message, status_message):
-    album_limit = 100  # You can adjust this limit
+    album_limit = 100
     user_id = message.from_user.id
     await status_message.edit_text("🔎 **Erome detected.** Launching browser...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     
     media_items = []
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch()
-            page = await browser.new_page()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        try:
             await page.goto(url, wait_until='networkidle', timeout=60000)
+
+            # --- NEW: Check for 404 Not Found page ---
+            page_title = await page.title()
+            if '404 Not Found' in page_title:
+                await status_message.edit_text("❌ **Erome album not found (404).** It may have been deleted or the link is incorrect.")
+                await browser.close()
+                return
+            # ---------------------------------------------
 
             try:
                 age_gate_button = page.locator('button#age-gate-button')
@@ -129,13 +147,11 @@ async def handle_erome_album_with_playwright(url, message, status_message):
 
             await page.wait_for_selector('video.video-player, a[data-fancybox="gallery"]', timeout=30000)
             
-            # 1. Scrape video URLs
             video_locators = page.locator('video.video-player')
             for i in range(await video_locators.count()):
                 src = await video_locators.nth(i).get_attribute('src')
                 if src: media_items.append({'type': 'video', 'url': src})
 
-            # 2. Scrape image URLs from their container links
             image_locators = page.locator('a[data-fancybox="gallery"]')
             for i in range(await image_locators.count()):
                 href = await image_locators.nth(i).get_attribute('href')
@@ -145,7 +161,7 @@ async def handle_erome_album_with_playwright(url, message, status_message):
             if not media_items:
                 await status_message.edit_text("❌ No videos or images found in this Erome album."); await browser.close(); return
 
-            media_items = media_items[:album_limit] # Apply album limit
+            media_items = media_items[:album_limit]
             content_count = len(media_items)
             video_count = sum(1 for item in media_items if item['type'] == 'video')
             image_count = sum(1 for item in media_items if item['type'] == 'image')
@@ -156,76 +172,65 @@ async def handle_erome_album_with_playwright(url, message, status_message):
             for i, item in enumerate(media_items, 1):
                 if user_id in CANCELLATION_REQUESTS: await status_message.edit_text("✅ **Album processing cancelled by user.**"); break
                 
-                item_type = item['type']
-                item_url = item['url']
-                caption = f"{item_type.capitalize()} {i}/{content_count}"
-                
+                item_type = item['type']; item_url = item['url']; caption = f"{item_type.capitalize()} {i}/{content_count}"
                 await status_message.edit_text(f"Processing {item_type} {i}/{content_count}...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
                 
-                if item_type == 'video':
-                    await download_erome_video(page, item_url, caption, message, status_message)
-                elif item_type == 'image':
-                    await download_erome_image(item_url, caption, message, status_message)
+                if item_type == 'video': await download_erome_video(page, item_url, caption, message, status_message)
+                elif item_type == 'image': await download_erome_image(item_url, caption, message, status_message)
             
+        except Exception as e:
+            # FIX: Provide a more detailed error message to the user
+            error_type = type(e).__name__
+            error_message = str(e).splitlines()[0] # Get the first line of the error
+            await status_message.edit_text(f"❌ **Failed to process Erome album.**\n\n**Error:** `{error_type}`\n**Details:** `{error_message}`")
+            print(f"--- EROME HANDLER ERROR ---\n{traceback.format_exc()}\n--------------------")
+        finally:
             await browser.close()
-
-    except Exception as e:
-        await status_message.edit_text(f"❌ Failed to process Erome album: {traceback.format_exc().splitlines()[-1]}")
-        return
 
     if user_id not in CANCELLATION_REQUESTS:
         await status_message.edit_text(f"✅ Finished processing all {content_count} items from the album!", reply_markup=None)
         await asyncio.sleep(5)
-    await status_message.delete()
+    
+    # Use a try-except block for deletion as the message might already be gone
+    try: await status_message.delete()
+    except: pass
 
+
+# The two functions below are from the previous version and are correct.
 async def download_erome_video(page, media_url, caption, message, status_message):
     user_id = message.from_user.id
     file_path = os.path.join(DOWNLOAD_LOCATION, f"{user_id}_{int(time.time())}.mp4")
     try:
-        # Using playwright's download handler for videos
         async with page.expect_download() as download_info:
             download_page = await page.context.new_page()
             await download_page.goto(media_url)
         download = await download_info.value
         await download.save_as(file_path)
         await download_page.close()
-        
         await status_message.edit_text("⬆️ **Uploading to Telegram...**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
         await app.send_video(chat_id=user_id, video=file_path, caption=caption, supports_streaming=True, progress=upload_progress_callback, progress_args=(status_message, user_id))
-            
     except Exception as e:
         print(f"Failed to process Erome video {media_url}: {e}")
         await message.reply_text(f"⚠️ Could not process video: {caption}")
     finally:
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
-
-# --- NEW FUNCTION TO HANDLE IMAGE DOWNLOADS ---
+        if file_path and os.path.exists(file_path): os.remove(file_path)
 async def download_erome_image(media_url, caption, message, status_message):
     user_id = message.from_user.id
-    # Use a generic extension for the temporary file path
     file_path = os.path.join(DOWNLOAD_LOCATION, f"{user_id}_{int(time.time())}.tmp")
     try:
-        # Use 'requests' for direct image downloads, it's more efficient
         with requests.get(media_url, stream=True, timeout=30) as r:
             r.raise_for_status()
             with open(file_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        
-        # No progress bar for photo uploads as they are usually quick
+                for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
         await status_message.edit_text("⬆️ **Uploading to Telegram...**") 
         await app.send_photo(chat_id=user_id, photo=file_path, caption=caption)
-            
     except Exception as e:
         print(f"Failed to process Erome image {media_url}: {e}")
         await message.reply_text(f"⚠️ Could not process image: {caption}")
     finally:
-        # Cleanup the downloaded file
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
+        if file_path and os.path.exists(file_path): os.remove(file_path)
 
-# --- Original process_video_url function (Unchanged) ---
+# --- MODIFIED VIDEO PROCESSOR (WITH BETTER ERROR HANDLING) ---
 async def process_video_url(url, ydl_opts, original_message, status_message, is_album_item=False):
     video_path, thumbnail_path = None, None; user_id = original_message.from_user.id; download_log_id = ObjectId()
     if downloads_collection is not None: downloads_collection.insert_one({"_id": download_log_id, "user_id": user_id, "url": url, "status": "processing", "start_time": datetime.now(timezone.utc)})
@@ -248,13 +253,27 @@ async def process_video_url(url, ydl_opts, original_message, status_message, is_
         if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"status": "success", "end_time": datetime.now(timezone.utc), "file_size_mb": file_size_mb}})
         if not is_album_item: await status_message.edit_text("✅ **Upload complete!**", reply_markup=None)
         if sent_message and DUMP_CHANNEL_ID != 0: await sent_message.forward(DUMP_CHANNEL_ID)
+    
     except Exception as e:
-        if "cancelled by user" in str(e): user_error_message = "✅ **Operation cancelled.**"
-        else: user_error_message = f"❌ An error occurred: {type(e).__name__}";
-        if "is larger than" in str(e): user_error_message = "❌ **Error:** Video is too large."
+        # --- NEW: More detailed error messages ---
+        error_str = str(e)
+        if "cancelled by user" in error_str:
+            user_error_message = "✅ **Operation cancelled.**"
+        elif "is larger than" in error_str:
+            user_error_message = "❌ **Error:** Video is too large to download."
+        elif isinstance(e, YoutubeDL.utils.DownloadError):
+            # Extract the core message from yt-dlp's verbose error for clarity
+            core_message = error_str.split('ERROR: ')[-1].strip()
+            user_error_message = f"❌ **Download Failed:**\n`{core_message}`"
+        else:
+            # Fallback for other unexpected errors
+            user_error_message = f"❌ **An error occurred:**\n`{type(e).__name__}: {error_str}`"
+        # ----------------------------------------
+            
         if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"status": "failed" if "cancelled" not in user_error_message else "cancelled", "end_time": datetime.now(timezone.utc), "error_message": str(e)}})
         print(f"--- PROCESS_VIDEO_URL ERROR ---\n{traceback.format_exc()}\n--------------------")
         if not is_album_item: await status_message.edit_text(user_error_message, reply_markup=None)
+    
     finally:
         if video_path and os.path.exists(video_path): os.remove(video_path)
         if thumbnail_path and os.path.exists(thumbnail_path): os.remove(thumbnail_path)
