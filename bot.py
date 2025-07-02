@@ -17,7 +17,7 @@ from playwright.async_api import async_playwright
 
 # --- Configuration (Your settings are preserved) ---
 API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
+API_HASH = os.environ.get("API_HASH"))
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
@@ -105,24 +105,32 @@ async def handle_single_video(url, message, status_message):
     ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(title)s.%(ext)s'),'noplaylist':True,'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,message.from_user.id)],'max_filesize':450*1024*1024}
     await process_video_url(url, ydl_opts, message, status_message)
 
-# --- REWRITTEN EROME HANDLER (VIDEOS ONLY, USING REQUESTS + COOKIES) ---
+# --- REWRITTEN EROME HANDLER (VIDEOS ONLY, WITH AGE GATE CLICK) ---
 async def handle_erome_album_with_playwright(url, message, status_message):
     album_limit = 15; user_id = message.from_user.id
-    await status_message.edit_text("🔎 **Erome detected.** Launching browser to get album content...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+    await status_message.edit_text("🔎 **Erome detected.** Launching browser...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     
     video_urls = []
-    cookies_dict = {}
-    
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch()
-            context = await browser.new_context()
-            page = await context.new_page()
+            page = await browser.new_page()
             await page.goto(url, wait_until='networkidle', timeout=60000)
+
+            # FIX: Handle the "I am over 18" age gate button
+            try:
+                age_gate_button = page.locator('button#age-gate-button')
+                if await age_gate_button.is_visible(timeout=5000):
+                    await status_message.edit_text("✅ Age gate detected. Clicking 'I am over 18'...")
+                    await age_gate_button.click()
+                    await page.wait_for_load_state('networkidle', timeout=30000)
+            except Exception as age_gate_error:
+                print(f"No age gate found or error clicking it: {age_gate_error}")
+
+            # FIX: Wait for *either* videos or images to be present
+            await page.wait_for_selector('video.video-player, img.img-resp', timeout=30000)
             
-            # Wait for video players to be present on the page
-            await page.wait_for_selector('video.video-player', timeout=30000)
-            
+            # Locate only video elements
             locators = page.locator('video.video-player')
             count = await locators.count()
             
@@ -131,14 +139,8 @@ async def handle_erome_album_with_playwright(url, message, status_message):
                 if src and src not in video_urls:
                     video_urls.append(src)
             
-            # Extract cookies to use with requests
-            cookies_list = await context.cookies()
-            cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies_list}
-
-            await browser.close()
-            
             if not video_urls:
-                await status_message.edit_text("❌ No videos found in this Erome album."); return
+                await status_message.edit_text("❌ No videos found in this Erome album."); await browser.close(); return
 
             content_count = len(video_urls)
             await status_message.edit_text(f"✅ Album found with **{content_count}** videos.\nProcessing one by one...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
@@ -147,7 +149,9 @@ async def handle_erome_album_with_playwright(url, message, status_message):
             for i, media_url in enumerate(video_urls, 1):
                 if user_id in CANCELLATION_REQUESTS: await status_message.edit_text("✅ **Album processing cancelled by user.**"); break
                 await status_message.edit_text(f"Processing video {i}/{content_count}...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
-                await download_erome_video_with_requests(media_url, cookies_dict, f"Video {i}/{content_count}", message, status_message)
+                await download_erome_video(page, media_url, f"Video {i}/{content_count}", message, status_message)
+            
+            await browser.close()
 
     except Exception as e:
         await status_message.edit_text(f"❌ Failed to process Erome album: {e}")
@@ -158,25 +162,17 @@ async def handle_erome_album_with_playwright(url, message, status_message):
         await asyncio.sleep(5)
     await status_message.delete()
 
-async def download_erome_video_with_requests(media_url, cookies, caption, message, status_message):
+async def download_erome_video(page, media_url, caption, message, status_message):
     user_id = message.from_user.id
     file_path = os.path.join(DOWNLOAD_LOCATION, f"{user_id}_{int(time.time())}.mp4")
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36', 'Referer': 'https://www.erome.com/'}
-        with requests.get(media_url, stream=True, headers=headers, cookies=cookies) as r:
-            r.raise_for_status()
-            total_length = int(r.headers.get('content-length', 0))
-            with open(file_path, 'wb') as f:
-                downloaded = 0
-                for chunk in r.iter_content(chunk_size=8192):
-                    if user_id in CANCELLATION_REQUESTS: raise Exception("Download cancelled by user.")
-                    downloaded += len(chunk)
-                    f.write(chunk)
-                    if total_length > 0:
-                        percent = (downloaded / total_length) * 100
-                        if (time.time() - globals().get('last_update_time', 0)) > 2:
-                            try: await status_message.edit_text(f"⏳ **Downloading Album Video...**\n{create_progress_bar(percent)} {percent:.2f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]])); globals()['last_update_time'] = time.time()
-                            except: pass
+        async with page.expect_download() as download_info:
+            # We create a new tab for each download to ensure a clean state
+            download_page = await page.context.new_page()
+            await download_page.goto(media_url)
+        download = await download_info.value
+        await download.save_as(file_path)
+        await download_page.close()
         
         await status_message.edit_text("⬆️ **Uploading to Telegram...**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
         await app.send_video(chat_id=user_id, video=file_path, caption=caption, supports_streaming=True, progress=upload_progress_callback, progress_args=(status_message, user_id))
@@ -190,6 +186,7 @@ async def download_erome_video_with_requests(media_url, cookies, caption, messag
 
 # --- Your original process_video_url function for Non-Erome sites ---
 async def process_video_url(url, ydl_opts, original_message, status_message, is_album_item=False):
+    # This function is unchanged for stability.
     video_path, thumbnail_path = None, None; user_id = original_message.from_user.id; download_log_id = ObjectId()
     if downloads_collection is not None: downloads_collection.insert_one({"_id": download_log_id, "user_id": user_id, "url": url, "status": "processing", "start_time": datetime.now(timezone.utc)})
     try:
@@ -226,7 +223,7 @@ async def process_video_url(url, ydl_opts, original_message, status_message, is_
             try: await status_message.delete()
             except Exception: pass
 
-# --- Main Entry Point (Unchanged) ---
+# --- Main Entry Point ---
 if __name__ == "__main__":
     if not os.path.exists(DOWNLOAD_LOCATION): os.makedirs(DOWNLOAD_LOCATION)
     print("Starting web server thread...")
