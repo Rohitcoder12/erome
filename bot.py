@@ -21,7 +21,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
 DOWNLOAD_LOCATION = "./downloads/"
-SUPPORTED_SITES = ["xvideos.com", "pornhub.com", "xnxx.com", "xhamster.com", "erome.com", "Instagram.com"]
+SUPPORTED_SITES = ["xvv1deos.com", "pornhub.org", "txnhh.com", "xhamster.com", "erome.com", "xhamster43.desi", "eporner.com"]
 
 # --- Global lock for all downloads ---
 DOWNLOAD_IN_PROGRESS = False
