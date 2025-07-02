@@ -13,7 +13,6 @@ from pymongo import MongoClient
 from datetime import datetime, timezone
 from PIL import Image
 from bson.objectid import ObjectId
-from playwright.async_api import async_playwright
 
 # --- Configuration (Your settings are preserved) ---
 API_ID = int(os.environ.get("API_ID"))
@@ -45,7 +44,7 @@ except Exception as e:
 # --- Pyrogram Client ---
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- Helper Functions (Unchanged) ---
+# --- Helper Functions (Updated) ---
 def create_progress_bar(percentage):
     bar_length=10; filled_length=int(bar_length*percentage//100)
     return '🔴'*filled_length+'⚪'*(bar_length-filled_length)
@@ -63,7 +62,7 @@ async def upload_progress_callback(c, t, m, user_id):
         try:await m.edit_text(f"⏫ **Uploading...**\n{create_progress_bar(p)} {p:.2f}% [{c/(1024*1024):.1f}MB / {t/(1024*1024):.1f}MB]", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]));globals()['last_upload_update_time']=time.time()
         except:pass
 
-# --- Bot Commands (Unchanged) ---
+# --- Bot Commands ---
 @app.on_message(filters.command("start")&filters.private)
 async def start_command(c,m):
     u=m.from_user
@@ -80,7 +79,7 @@ async def cancel_handler(client, callback_query):
     await callback_query.answer("Cancellation request sent.", show_alert=False)
     await callback_query.message.edit_text("🤚 **Cancellation requested...** Please wait.")
 
-# --- Link Handler & Processing Logic (Unchanged) ---
+# --- Link Handler & Processing Logic ---
 @app.on_message(filters.private & filters.regex(r"https?://[^\s]+"))
 async def link_handler(client: Client, message: Message):
     global DOWNLOAD_IN_PROGRESS
@@ -92,7 +91,7 @@ async def link_handler(client: Client, message: Message):
     CANCELLATION_REQUESTS.discard(user_id)
     status_message = await message.reply_text("✅ **URL received. Starting process...**", quote=True, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     try:
-        if "erome.com" in url: await handle_erome_album_with_playwright(url, message, status_message)
+        if "erome.com" in url: await handle_erome_album(url, message, status_message)
         else: await handle_single_video(url, message, status_message)
     except Exception as e:
         print(f"--- UNHANDLED ERROR IN LINK_HANDLER ---\n{traceback.format_exc()}\n--------------------")
@@ -105,80 +104,68 @@ async def handle_single_video(url, message, status_message):
     ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(title)s.%(ext)s'),'noplaylist':True,'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,message.from_user.id)],'max_filesize':450*1024*1024}
     await process_video_url(url, ydl_opts, message, status_message)
 
-# --- REWRITTEN EROME HANDLER (VIDEOS ONLY) ---
-async def handle_erome_album_with_playwright(url, message, status_message):
-    album_limit = 15; user_id = message.from_user.id
-    await status_message.edit_text("🔎 **Erome detected.** Launching browser to get album content...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+async def handle_erome_album(url, message, status_message):
+    album_limit = 10; user_id = message.from_user.id
+    await status_message.edit_text("🔎 This looks like an Erome album. Checking for content...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+    meta_opts = {'quiet': True, 'playlistend': album_limit}
+    with YoutubeDL(meta_opts) as ydl: info = ydl.extract_info(url, download=False)
     
-    media_urls = []
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch()
-            page = await browser.new_page()
-            await page.goto(url, wait_until='networkidle', timeout=60000)
-            await page.wait_for_selector('video.video-player', timeout=30000)
-            
-            # Locate only video elements
-            locators = page.locator('video.video-player')
-            count = await locators.count()
-            
-            for i in range(min(count, album_limit)):
-                src = await locators.nth(i).get_attribute('src')
-                if src:
-                    media_urls.append(src)
-            
-            if not media_urls:
-                await status_message.edit_text("❌ No videos found in this Erome album."); await browser.close(); return
+    # --- FIX for Doubling Videos: De-duplicate the entries ---
+    entries = info.get('entries', [])
+    unique_entries = []
+    seen_urls = set()
+    for entry in entries:
+        if entry and 'url' in entry and entry['url'] not in seen_urls:
+            unique_entries.append(entry)
+            seen_urls.add(entry['url'])
+    # --------------------------------------------------------
 
-            content_count = len(media_urls)
-            await status_message.edit_text(f"✅ Album found with **{content_count}** videos.\nProcessing one by one...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
-            await asyncio.sleep(2)
-            
-            for i, media_url in enumerate(media_urls, 1):
-                if user_id in CANCELLATION_REQUESTS: await status_message.edit_text("✅ **Album processing cancelled by user.**"); break
-                
-                await status_message.edit_text(f"Processing video {i}/{content_count}...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
-                await download_erome_video(page, media_url, f"Video {i}/{content_count}", message, status_message)
-            
-            await browser.close()
+    if not unique_entries: await status_message.edit_text("❌ No content found in this Erome album."); return
+    content_count = len(unique_entries)
+    await status_message.edit_text(f"✅ Album found with **{content_count}** items (limit is {album_limit}).\nProcessing one by one...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+    await asyncio.sleep(2)
 
-    except Exception as e:
-        await status_message.edit_text(f"❌ Failed to process Erome album: {e}")
-        return
-
+    for i, entry in enumerate(unique_entries, 1):
+        if user_id in CANCELLATION_REQUESTS: await status_message.edit_text("✅ **Album processing cancelled by user.**"); break
+        
+        # --- FIX for Photo Downloads: Check for video codec ---
+        # If vcodec is 'none', it's an image. Otherwise, it's a video.
+        if entry.get('vcodec') == 'none':
+            await handle_photo_download(entry, f"[{i}/{content_count}] ", message)
+        else:
+            video_url = entry.get('webpage_url') or entry.get('url')
+            single_video_ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,f"album_item_{i}_%(title)s.%(ext)s"),'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,user_id)],'max_filesize':450*1024*1024}
+            await status_message.edit_text(f"Downloading video **{i}/{content_count}**...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+            await process_video_url(video_url, single_video_ydl_opts, message, status_message, is_album_item=True)
+    
     if user_id not in CANCELLATION_REQUESTS:
-        await status_message.edit_text(f"✅ Finished processing all {content_count} videos from the album!", reply_markup=None)
+        await status_message.edit_text(f"✅ Finished processing all {content_count} items from the album!", reply_markup=None)
         await asyncio.sleep(5)
     await status_message.delete()
 
-async def download_erome_video(page, media_url, caption, message, status_message):
-    user_id = message.from_user.id
-    file_path = os.path.join(DOWNLOAD_LOCATION, f"{user_id}_{int(time.time())}.mp4")
+async def handle_photo_download(entry, prefix, message):
+    photo_url = entry.get('url')
+    photo_title = prefix + entry.get('title', 'Untitled Photo')
     try:
-        async with page.expect_download() as download_info:
-            await page.goto(media_url)
-        download = await download_info.value
-        await download.save_as(file_path)
-        
-        await status_message.edit_text("⬆️ **Uploading to Telegram...**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
-        await app.send_video(chat_id=user_id, video=file_path, caption=caption, supports_streaming=True, progress=upload_progress_callback, progress_args=(status_message, user_id))
-            
+        await message.reply_photo(photo=photo_url, caption=photo_title)
+        await asyncio.sleep(1)
     except Exception as e:
-        print(f"Failed to process Erome video {media_url}: {e}")
-        await message.reply_text(f"⚠️ Could not process video: {caption}")
-    finally:
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
+        print(f"Failed to send photo {photo_url}: {e}")
+        await message.reply_text(f"⚠️ Could not send photo: {photo_title}")
 
-# --- Function for Non-Erome sites (Unchanged) ---
 async def process_video_url(url, ydl_opts, original_message, status_message, is_album_item=False):
-    video_path, thumbnail_path = None, None; user_id = original_message.from_user.id; download_log_id = ObjectId()
-    if downloads_collection is not None: downloads_collection.insert_one({"_id": download_log_id, "user_id": user_id, "url": url, "status": "processing", "start_time": datetime.now(timezone.utc)})
+    video_path, thumbnail_path = None, None
+    user_id = original_message.from_user.id
+    download_log_id = ObjectId()
+    if downloads_collection is not None:
+        downloads_collection.insert_one({"_id": download_log_id, "user_id": user_id, "url": url, "status": "processing", "start_time": datetime.now(timezone.utc)})
     try:
         with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False); video_title = info.get('title', 'Untitled Video')
+            info = ydl.extract_info(url, download=False)
+            video_title = info.get('title', 'Untitled Video')
             if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"video_title": video_title}})
-            print(f"[{user_id}] Starting download for: {video_title}"); ydl.download([url])
+            print(f"[{user_id}] Starting download for: {video_title}")
+            ydl.download([url])
             list_of_files = [os.path.join(DOWNLOAD_LOCATION, f) for f in os.listdir(DOWNLOAD_LOCATION)];
             if not list_of_files: raise FileNotFoundError("Download folder is empty.")
             video_path = max(list_of_files, key=os.path.getctime)
@@ -186,29 +173,35 @@ async def process_video_url(url, ydl_opts, original_message, status_message, is_
         if thumbnail_url := info.get('thumbnail'):
             try:
                 r=requests.get(thumbnail_url); r.raise_for_status()
-                with Image.open(io.BytesIO(r.content)) as img: thumbnail_path = os.path.join(DOWNLOAD_LOCATION, "thumb.jpg"); img.convert("RGB").save(thumbnail_path, "jpeg")
+                with Image.open(io.BytesIO(r.content)) as img:
+                    thumbnail_path = os.path.join(DOWNLOAD_LOCATION, "thumb.jpg")
+                    img.convert("RGB").save(thumbnail_path, "jpeg")
             except Exception as e: print(f"Thumb Error: {e}"); thumbnail_path = None
         await status_message.edit_text("⬆️ **Uploading to Telegram...**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
-        sent_message = await app.send_video(chat_id=user_id, video=video_path, caption=f"**Title:** {video_title}\n**Source:** {info.get('webpage_url', url)}", thumb=thumbnail_path, supports_streaming=True, progress=upload_progress_callback, progress_args=(status_message, user_id))
+        upload_progress_args = (status_message, user_id)
+        sent_message = await app.send_video(chat_id=user_id, video=video_path, caption=f"**Title:** {video_title}\n**Source:** {info.get('webpage_url', url)}", thumb=thumbnail_path, supports_streaming=True, progress=upload_progress_callback, progress_args=upload_progress_args)
         if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"status": "success", "end_time": datetime.now(timezone.utc), "file_size_mb": file_size_mb}})
         if not is_album_item: await status_message.edit_text("✅ **Upload complete!**", reply_markup=None)
         if sent_message and DUMP_CHANNEL_ID != 0: await sent_message.forward(DUMP_CHANNEL_ID)
     except Exception as e:
-        if "cancelled by user" in str(e): user_error_message = "✅ **Operation cancelled.**"
-        else: user_error_message = f"❌ An error occurred: {type(e).__name__}";
-        if "is larger than" in str(e): user_error_message = "❌ **Error:** Video is too large."
-        if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"status": "failed" if "cancelled" not in user_error_message else "cancelled", "end_time": datetime.now(timezone.utc), "error_message": str(e)}})
-        print(f"--- PROCESS_VIDEO_URL ERROR ---\n{traceback.format_exc()}\n--------------------")
+        if "cancelled by user" in str(e):
+            user_error_message = "✅ **Operation cancelled.**"
+            if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"status": "cancelled", "end_time": datetime.now(timezone.utc), "error_message": "User cancellation"}})
+        else:
+            user_error_message = f"❌ An error occurred: {type(e).__name__}"
+            if "is larger than" in str(e): user_error_message = "❌ **Error:** Video is too large."
+            if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"status": "failed", "end_time": datetime.now(timezone.utc), "error_message": str(e)}})
+            print(f"--- PROCESS_VIDEO_URL ERROR ---\n{traceback.format_exc()}\n--------------------")
         if not is_album_item: await status_message.edit_text(user_error_message, reply_markup=None)
     finally:
-        if video_path and os.path.exists(video_path): os.remove(_path)
+        if video_path and os.path.exists(video_path): os.remove(video_path)
         if thumbnail_path and os.path.exists(thumbnail_path): os.remove(thumbnail_path)
         if not is_album_item:
             await asyncio.sleep(5)
             try: await status_message.delete()
             except Exception: pass
 
-# --- Main Entry Point (Unchanged) ---
+# --- Main Entry Point ---
 if __name__ == "__main__":
     if not os.path.exists(DOWNLOAD_LOCATION): os.makedirs(DOWNLOAD_LOCATION)
     print("Starting web server thread...")
