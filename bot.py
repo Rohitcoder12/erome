@@ -47,7 +47,7 @@ app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token
 # --- Helper Functions (Updated) ---
 def create_progress_bar(percentage):
     bar_length=10; filled_length=int(bar_length*percentage//100)
-    return '🔴'*filled_length+'⚪'*(bar_length-filled_length)
+    return '🟢'*filled_length+'⚪'*(bar_length-filled_length)
 def progress_hook(d, m, user_id):
     if user_id in CANCELLATION_REQUESTS: raise Exception("Download cancelled by user.")
     if d['status']=='downloading' and (total_bytes := d.get('total_bytes') or d.get('total_bytes_estimate')):
