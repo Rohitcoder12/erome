@@ -21,7 +21,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
 DOWNLOAD_LOCATION = "./downloads/"
-SUPPORTED_SITES = ["xvv1deos.com", "pornhub.org", "xnxx.com", "xhamster.com", "erome.com"]
+SUPPORTED_SITES = ["xvv1deos.com", "pornhub.org", "txnhh.com", "xhamster.com", "erome.com"]
 
 # --- NEW: State management for active downloads ---
 # A set to store the user IDs of those currently downloading.
