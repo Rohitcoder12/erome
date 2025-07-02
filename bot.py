@@ -48,7 +48,7 @@ app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token
 # --- Helper Functions ---
 def create_progress_bar(percentage):
     bar_length=10; filled_length=int(bar_length*percentage//100)
-    return '🔴'*filled_length+'⚪'*(bar_length-filled_length)
+    return '🟢'*filled_length+'⚪'*(bar_length-filled_length)
 
 # UPDATED: Progress hook now checks for cancellation
 def progress_hook(d, m, user_id):
