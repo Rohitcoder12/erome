@@ -28,9 +28,9 @@ DOWNLOAD_LOCATION = "./downloads/"
 
 # --- Start Message Configuration (EDIT THESE) ---
 # You can get a direct image link by uploading a photo to a site like https://imgbb.com/
-START_PHOTO_URL = "https://i.ibb.co/tZJc5Fh/RX-Downloader-BOT-logo.png"
+START_PHOTO_URL = "https://telegra.ph/Start-07-03-42"
 ABOUT_URL = "https://t.me/dailynewswalla"  # Link for your "About" button (e.g., your channel)
-MAINTAINED_BY_URL = "https://t.me/your_username" # CHANGE THIS to your Telegram profile link
+MAINTAINED_BY_URL = "https://t.me/rexonblood" # CHANGE THIS to your Telegram profile link
 # ---------------------------------------------------
 
 # --- Expanded List of Supported Sites ---
@@ -115,7 +115,7 @@ async def start_command(client, message):
     start_text = (
         "» **I'M RX Downloader BOT**\n\n"
         "📥 **I CAN DOWNLOAD VIDEOS FROM:**\n"
-        "• YOUTUBE, INSTAGRAM, TIKTOK\n"
+        "• EROME, XHAMSTER, MOTHERLESS\n"
         "• PORNHUB, XVIDEOS, XNXX\n"
         "• AND 1000+ OTHER SITES!\n\n"
         "🚀 **JUST SEND ME A LINK!**"
