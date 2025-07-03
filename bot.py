@@ -26,9 +26,8 @@ DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
 DOWNLOAD_LOCATION = "./downloads/"
 SUPPORTED_SITES = ["xvv1deos.com", "pornhub.org", "txnhh.com", "xhamster.com", "erome.com", "xhamster43.desi", "eporner.com"]
 
-# --- MODIFIED: Force Subscription Configuration (Using Username) ---
-FORCE_SUB_CHANNEL = "@dailynewswalla"  # Use the public username as a string
-# -------------------------------------------------------------------
+# --- Force Subscription Configuration ---
+FORCE_SUB_CHANNEL = "@dailynewswalla"
 
 # --- State Management ---
 DOWNLOAD_IN_PROGRESS = False
@@ -71,18 +70,16 @@ async def upload_progress_callback(c, t, m, user_id):
         try:await m.edit_text(f"⏫ **Uploading...**\n{create_progress_bar(p)} {p:.2f}% [{c/(1024*1024):.1f}MB / {t/(1024*1024):.1f}MB]", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]));globals()['last_upload_update_time']=time.time()
         except:pass
 
-# --- Bot Commands (Updated to use FORCE_SUB_CHANNEL) ---
+# --- Bot Commands (Unchanged) ---
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     user_id = message.from_user.id
     try:
-        # Use the channel username for the check
         member = await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
         if member.status in [ChatMemberStatus.BANNED, ChatMemberStatus.RESTRICTED]:
             await message.reply_text("You are banned from using this bot.")
             return
     except UserNotParticipant:
-        # The link in the button should be the public t.me link
         join_button = InlineKeyboardMarkup([[InlineKeyboardButton("Join Our Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])
         await message.reply_text("To use this bot, you must join our channel. After joining, please send /start again.", reply_markup=join_button)
         return
@@ -90,7 +87,6 @@ async def start_command(client, message):
         print(f"Error during force sub check: {e}")
         await message.reply_text("An error occurred while checking your membership status. Please ensure the bot is an admin in the channel.")
         return
-
     u = message.from_user
     if users_collection is not None:
         ud={"_id":u.id,"first_name":u.first_name,"last_name":u.last_name,"username":u.username,"last_started":datetime.now(timezone.utc)}
@@ -108,39 +104,29 @@ async def cancel_handler(client, callback_query):
     await callback_query.answer("Cancellation request sent.", show_alert=False)
     await callback_query.message.edit_text("🤚 **Cancellation requested...** Please wait.")
 
-# --- Link Handler (Updated to use FORCE_SUB_CHANNEL) ---
+# --- Link Handler (Unchanged) ---
 @app.on_message(filters.private & filters.regex(r"https?://[^\s]+"))
 async def link_handler(client: Client, message: Message):
     user_id = message.from_user.id
     try:
-        # Use the channel username for the check
         member = await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
         if member.status in [ChatMemberStatus.BANNED, ChatMemberStatus.RESTRICTED]:
-            await message.reply_text("You are banned from using this bot.")
-            return
+            await message.reply_text("You are banned from using this bot."); return
     except UserNotParticipant:
-        # The link in the button should be the public t.me link
         join_button = InlineKeyboardMarkup([[InlineKeyboardButton("Join Our Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])
-        await message.reply_text("To use this bot, you must join our channel. After joining, please send the link again.", reply_markup=join_button)
-        return
+        await message.reply_text("To use this bot, you must join our channel. After joining, please send the link again.", reply_markup=join_button); return
     except Exception as e:
         print(f"Error during force sub check: {e}")
-        await message.reply_text("An error occurred while checking your membership status. Please ensure the bot is an admin in the channel.")
-        return
-    
+        await message.reply_text("An error occurred while checking your membership status. Please ensure the bot is an admin in the channel."); return
     global DOWNLOAD_IN_PROGRESS
     if DOWNLOAD_IN_PROGRESS:
-        await message.reply_text("🤚 **Bot is busy!** Another download is in progress. Please try again in a few minutes.")
-        return
+        await message.reply_text("🤚 **Bot is busy!** Another download is in progress. Please try again in a few minutes."); return
     url = message.text.strip()
     if not any(site in url for site in SUPPORTED_SITES):
-        await message.reply_text("❌ **Sorry, this website is not supported.**")
-        return
-    
+        await message.reply_text("❌ **Sorry, this website is not supported.**"); return
     DOWNLOAD_IN_PROGRESS = True
     CANCELLATION_REQUESTS.discard(user_id)
     status_message = await message.reply_text("✅ **URL received. Starting process...**", quote=True, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
-    
     try:
         if "erome.com" in url: await handle_erome_album(url, message, status_message)
         else: await handle_single_video(url, message, status_message)
@@ -151,17 +137,16 @@ async def link_handler(client: Client, message: Message):
         CANCELLATION_REQUESTS.discard(user_id)
         DOWNLOAD_IN_PROGRESS = False
 
-# The rest of your code is unchanged.
 async def handle_single_video(url, message, status_message):
     ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(title)s.%(ext)s'),'noplaylist':True,'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,message.from_user.id)],'max_filesize':450*1024*1024}
     await process_video_url(url, ydl_opts, message, status_message)
+
 async def handle_erome_album(url, message, status_message):
     album_limit = 10; user_id = message.from_user.id
     await status_message.edit_text("🔎 This looks like an Erome album. Checking for content...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     meta_opts = {'extract_flat': True, 'quiet': True, 'playlistend': album_limit}
     with YoutubeDL(meta_opts) as ydl: info = ydl.extract_info(url, download=False)
-    original_entries = info.get('entries', [])
-    content_to_process, seen_filenames = [], set()
+    original_entries, content_to_process, seen_filenames = info.get('entries', []), [], set()
     for entry in original_entries:
         filename = entry.get('url', '').split('/')[-1]
         if filename and filename not in seen_filenames:
@@ -184,17 +169,28 @@ async def handle_erome_album(url, message, status_message):
     if not user_id in CANCELLATION_REQUESTS:
         await status_message.edit_text(f"✅ Finished processing all {content_count} items from the album!", reply_markup=None); await asyncio.sleep(5)
     await status_message.delete()
+
 async def handle_photo_download(entry, prefix, message):
     photo_url, photo_title = entry.get('url'), prefix + entry.get('title', 'Untitled Photo')
     await message.reply_photo(photo=photo_url, caption=photo_title); await asyncio.sleep(1)
+
+# --- CORRECTED FUNCTION ---
 async def process_video_url(url, ydl_opts, original_message, status_message, is_album_item=False):
-    video_path, thumbnail_path, user_id, download_log_id = None, None, original_message.from_user.id, ObjectId()
-    if downloads_collection is not None: downloads_collection.insert_one({"_id": download_log_id, "user_id": user_id, "url": url, "status": "processing", "start_time": datetime.now(timezone.utc)})
+    video_path, thumbnail_path = None, None
+    user_id = original_message.from_user.id
+    download_log_id = ObjectId()
+    if downloads_collection is not None:
+        downloads_collection.insert_one({"_id": download_log_id, "user_id": user_id, "url": url, "status": "processing", "start_time": datetime.now(timezone.utc)})
     try:
         with YoutubeDL(ydl_opts) as ydl:
-            info, video_title = ydl.extract_info(url, download=False), info.get('title', 'Untitled Video')
+            # --- FIX: Split the variable assignment onto two lines ---
+            info = ydl.extract_info(url, download=False)
+            video_title = info.get('title', 'Untitled Video')
+            # ---------------------------------------------------------
+            
             if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"video_title": video_title}})
-            print(f"[{user_id}] Starting download for: {video_title}"); ydl.download([url])
+            print(f"[{user_id}] Starting download for: {video_title}")
+            ydl.download([url])
             list_of_files = [os.path.join(DOWNLOAD_LOCATION, f) for f in os.listdir(DOWNLOAD_LOCATION)]
             if not list_of_files: raise FileNotFoundError("Download folder is empty.")
             video_path = max(list_of_files, key=os.path.getctime)
@@ -211,7 +207,8 @@ async def process_video_url(url, ydl_opts, original_message, status_message, is_
         if not is_album_item: await status_message.edit_text("✅ **Upload complete!**", reply_markup=None)
         if sent_message and DUMP_CHANNEL_ID != 0: await sent_message.forward(DUMP_CHANNEL_ID)
     except Exception as e:
-        if "cancelled by user" in str(e): user_error_message = "✅ **Operation cancelled.**"
+        if "cancelled by user" in str(e):
+            user_error_message = "✅ **Operation cancelled."
         else:
             user_error_message = f"❌ An error occurred: {type(e).__name__}"
             if "is larger than" in str(e): user_error_message = "❌ **Error:** Video is too large."
