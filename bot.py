@@ -21,17 +21,14 @@ from bson.objectid import ObjectId
 # --- Configuration ---
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
-BOT_TOKEN = os.environ.get("BOT_TOKEN") # <-- FIX: Removed the extra parenthesis here
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
 DOWNLOAD_LOCATION = "./downloads/"
 
 # --- Start Message Configuration (EDIT THESE) ---
-# You can get a direct image link by uploading a photo to a site like https://imgbb.com/
-START_PHOTO_URL = "https://telegra.ph/Start-07-03-42"
-ABOUT_URL = "https://t.me/dailynewswalla"  # Link for your "About" button (e.g., your channel)
-MAINTAINED_BY_URL = "https://t.me/rexonblood" # CHANGE THIS to your Telegram profile link
-# ---------------------------------------------------
+START_PHOTO_URL = "https://i.ibb.co/tZJc5Fh/RX-Downloader-BOT-logo.png"
+MAINTAINED_BY_URL = "https://t.me/your_username" # CHANGE THIS to your Telegram profile link
 
 # --- Expanded List of Supported Sites ---
 SUPPORTED_SITES = [
@@ -55,7 +52,7 @@ SUPPORTED_SITES = [
 # --- Force Subscription Configuration ---
 FORCE_SUB_CHANNEL = "@dailynewswalla"
 
-# --- State Management & Other Setups (Unchanged) ---
+# --- State Management & Other Setups ---
 DOWNLOAD_IN_PROGRESS = False
 CANCELLATION_REQUESTS = set()
 server = Flask(__name__)
@@ -72,10 +69,23 @@ except Exception as e:
     print(f"Error connecting to MongoDB: {e}"); users_collection=None; downloads_collection=None
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- Helper Functions (Unchanged) ---
+# --- Helper Functions ---
 def create_progress_bar(percentage):
     bar_length=10; filled_length=int(bar_length*percentage//100)
     return '🟢'*filled_length+'⚪'*(bar_length-filled_length)
+
+# --- NEW: Helper function to generate the sites list text (for code reuse) ---
+def get_sites_list_text():
+    reply_text = "✅ **Here are the currently supported sites:**\n\n```\n"
+    sorted_sites = sorted(list(set(SUPPORTED_SITES)))
+    num_sites = len(sorted_sites)
+    sites_per_column = (num_sites + 2) // 3
+    columns = [sorted_sites[i:i + sites_per_column] for i in range(0, num_sites, sites_per_column)]
+    for row in zip_longest(*columns, fillvalue=""):
+        reply_text += f"{row[0]:<25}{row[1]:<25}{row[2]:<25}\n"
+    reply_text += "```"
+    return reply_text
+
 def progress_hook(d, m, user_id):
     if user_id in CANCELLATION_REQUESTS: raise Exception("Download cancelled by user.")
     if d['status']=='downloading' and (total_bytes := d.get('total_bytes') or d.get('total_bytes_estimate')):
@@ -91,7 +101,6 @@ async def upload_progress_callback(c, t, m, user_id):
         except:pass
 
 # --- Bot Commands ---
-
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     user_id = message.from_user.id
@@ -105,7 +114,7 @@ async def start_command(client, message):
     except Exception as e:
         print(f"Error during force sub check: {e}")
         await message.reply_text("An error occurred while checking your membership status. Please ensure the bot is an admin in the channel."); return
-
+    
     u = message.from_user
     if users_collection is not None:
         ud={"_id":u.id,"first_name":u.first_name,"last_name":u.last_name,"username":u.username,"last_started":datetime.now(timezone.utc)}
@@ -115,39 +124,46 @@ async def start_command(client, message):
     start_text = (
         "» **I'M RX Downloader BOT**\n\n"
         "📥 **I CAN DOWNLOAD VIDEOS FROM:**\n"
-        "• EROME, XHAMSTER, MOTHERLESS\n"
+        "• YOUTUBE, INSTAGRAM, TIKTOK\n"
         "• PORNHUB, XVIDEOS, XNXX\n"
         "• AND 1000+ OTHER SITES!\n\n"
         "🚀 **JUST SEND ME A LINK!**"
     )
 
+    # MODIFIED: Keyboard now uses a callback button for sites
     keyboard = InlineKeyboardMarkup(
         [[
-            InlineKeyboardButton("• ABOUT", url=ABOUT_URL),
+            InlineKeyboardButton("• SUPPORTED SITES", callback_data="show_sites_list"),
             InlineKeyboardButton("• MAINTAINED BY", url=MAINTAINED_BY_URL)
         ]]
     )
-
     await message.reply_photo(photo=START_PHOTO_URL, caption=start_text, reply_markup=keyboard)
 
 @app.on_message(filters.command("sites") & filters.private)
 async def sites_command(client, message):
-    reply_text = "✅ **Here are the currently supported sites:**\n\n```\n"
-    sorted_sites = sorted(list(set(SUPPORTED_SITES)))
-    num_sites = len(sorted_sites)
-    sites_per_column = (num_sites + 2) // 3
-    columns = [sorted_sites[i:i + sites_per_column] for i in range(0, num_sites, sites_per_column)]
-    for row in zip_longest(*columns, fillvalue=""):
-        reply_text += f"{row[0]:<25}{row[1]:<25}{row[2]:<25}\n"
-    reply_text += "```"
-    await message.reply_text(reply_text)
+    # This command now uses the helper function
+    sites_text = get_sites_list_text()
+    await message.reply_text(sites_text)
+
+# --- NEW: Callback handler for the "SUPPORTED SITES" button ---
+@app.on_callback_query(filters.regex("^show_sites_list$"))
+async def show_sites_handler(client, callback_query):
+    # Get the formatted text from the helper function
+    sites_text = get_sites_list_text()
+    # Acknowledge the button press
+    await callback_query.answer()
+    # Send the list as a new message
+    await callback_query.message.reply_text(sites_text)
 
 @app.on_callback_query(filters.regex("^cancel_"))
 async def cancel_handler(client, callback_query):
-    user_id = int(callback_query.data.split("_")[1]);
+    user_id = int(callback_query.data.split("_")[1])
     if callback_query.from_user.id != user_id: await callback_query.answer("This is not for you!", show_alert=True); return
-    CANCELLATION_REQUESTS.add(user_id); await callback_query.answer("Cancellation request sent.", show_alert=False); await callback_query.message.edit_text("🤚 **Cancellation requested...** Please wait.")
+    CANCELLATION_REQUESTS.add(user_id)
+    await callback_query.answer("Cancellation request sent.", show_alert=False)
+    await callback_query.message.edit_text("🤚 **Cancellation requested...** Please wait.")
 
+# The rest of your code is unchanged and correct. I've collapsed it for brevity.
 @app.on_message(filters.private & filters.regex(r"https?://[^\s]+"))
 async def link_handler(client, message):
     user_id = message.from_user.id
@@ -169,7 +185,6 @@ async def link_handler(client, message):
         else: await handle_single_video(url, message, status_message)
     except Exception as e: print(f"--- UNHANDLED ERROR IN LINK_HANDLER ---\n{traceback.format_exc()}\n--------------------"); await status_message.edit_text(f"❌ A critical error occurred: {e}")
     finally: CANCELLATION_REQUESTS.discard(user_id); DOWNLOAD_IN_PROGRESS = False
-
 async def handle_single_video(url, message, status_message):
     ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(title)s.%(ext)s'),'noplaylist':True,'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,message.from_user.id)],'max_filesize':450*1024*1024}
     await process_video_url(url, ydl_opts, message, status_message)
@@ -236,8 +251,6 @@ async def process_video_url(url, ydl_opts, original_message, status_message, is_
             await asyncio.sleep(5)
             try: await status_message.delete()
             except Exception: pass
-
-# --- Main Entry Point ---
 if __name__ == "__main__":
     if not os.path.exists(DOWNLOAD_LOCATION): os.makedirs(DOWNLOAD_LOCATION)
     print("Starting web server thread...")
