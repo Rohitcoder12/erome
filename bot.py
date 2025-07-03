@@ -21,16 +21,16 @@ from bson.objectid import ObjectId
 # --- Configuration ---
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
-BOT_TOKEN = os.environ.get("BOT_TOKEN"))
+BOT_TOKEN = os.environ.get("BOT_TOKEN") # <-- FIX: Removed the extra parenthesis here
 MONGO_URI = os.environ.get("MONGO_URI")
 DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
 DOWNLOAD_LOCATION = "./downloads/"
 
-# --- NEW: Start Message Configuration (EDIT THESE) ---
+# --- Start Message Configuration (EDIT THESE) ---
 # You can get a direct image link by uploading a photo to a site like https://imgbb.com/
-START_PHOTO_URL = "https://telegra.ph/Start-07-03-42"
+START_PHOTO_URL = "https://i.ibb.co/tZJc5Fh/RX-Downloader-BOT-logo.png"
 ABOUT_URL = "https://t.me/dailynewswalla"  # Link for your "About" button (e.g., your channel)
-MAINTAINED_BY_URL = "https://t.me/krowzen01" # CHANGE THIS to your Telegram profile link
+MAINTAINED_BY_URL = "https://t.me/your_username" # CHANGE THIS to your Telegram profile link
 # ---------------------------------------------------
 
 # --- Expanded List of Supported Sites ---
@@ -92,7 +92,6 @@ async def upload_progress_callback(c, t, m, user_id):
 
 # --- Bot Commands ---
 
-# --- MODIFIED: /start command to show the new welcome message ---
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     user_id = message.from_user.id
@@ -107,40 +106,30 @@ async def start_command(client, message):
         print(f"Error during force sub check: {e}")
         await message.reply_text("An error occurred while checking your membership status. Please ensure the bot is an admin in the channel."); return
 
-    # Save user to DB
     u = message.from_user
     if users_collection is not None:
         ud={"_id":u.id,"first_name":u.first_name,"last_name":u.last_name,"username":u.username,"last_started":datetime.now(timezone.utc)}
         try:users_collection.update_one({"_id":u.id},{"$set":ud},upsert=True);print(f"User {u.id} saved.")
         except Exception as e:print(f"DB Error: {e}")
 
-    # Construct the new start message
     start_text = (
         "» **I'M RX Downloader BOT**\n\n"
         "📥 **I CAN DOWNLOAD VIDEOS FROM:**\n"
-        "• EROME, XHAMSTER, MOTHERLESS\n"
+        "• YOUTUBE, INSTAGRAM, TIKTOK\n"
         "• PORNHUB, XVIDEOS, XNXX\n"
         "• AND 1000+ OTHER SITES!\n\n"
         "🚀 **JUST SEND ME A LINK!**"
     )
 
     keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("• ABOUT", url=ABOUT_URL),
-                InlineKeyboardButton("• MAINTAINED BY", url=MAINTAINED_BY_URL)
-            ]
-        ]
+        [[
+            InlineKeyboardButton("• ABOUT", url=ABOUT_URL),
+            InlineKeyboardButton("• MAINTAINED BY", url=MAINTAINED_BY_URL)
+        ]]
     )
 
-    # Send the photo with the caption and buttons
-    await message.reply_photo(
-        photo=START_PHOTO_URL,
-        caption=start_text,
-        reply_markup=keyboard
-    )
+    await message.reply_photo(photo=START_PHOTO_URL, caption=start_text, reply_markup=keyboard)
 
-# --- /sites command (Unchanged) ---
 @app.on_message(filters.command("sites") & filters.private)
 async def sites_command(client, message):
     reply_text = "✅ **Here are the currently supported sites:**\n\n```\n"
@@ -152,9 +141,6 @@ async def sites_command(client, message):
         reply_text += f"{row[0]:<25}{row[1]:<25}{row[2]:<25}\n"
     reply_text += "```"
     await message.reply_text(reply_text)
-
-# --- All other handlers and functions remain the same ---
-# (I've collapsed them for brevity, but they are all here and correct)
 
 @app.on_callback_query(filters.regex("^cancel_"))
 async def cancel_handler(client, callback_query):
