@@ -32,20 +32,20 @@ SUPPORTED_SITES = [
     # A-F
     "adultswim.com", "anysex.com", "beeg.com", "bravotube.net", "camwhores.tv", "camsoda.com",
     "chaturbate.com", "desitube.com", "drporn.com", "dtube.video", "e-hentai.org", "empflix.com",
-    "eporner.com", "erome.com", "erome.io", "exhentai.org", "extremetube.com", "fapbox.com",
+    "eporner.com", "erome.com", "erome.io", "exhentai.org", "xHamster19.com", "fapbox.com",
     # G-P
     "gaytube.com", "hclips.com", "hentai-foundry.com", "hentaivideos.net", "hentaistream.xxx",
     "hottystop.com", "hclips.com", "iqtube.com", "ivxxx.com", "keezmovies.com", "livejasmin.com",
-    "manyvids.com", "metacafe.com", "mofosex.com", "motherless.com", "mrdeepfakes.com", "myvidster.com",
+    "manyvids.com", "metacafe.com", "mofosex.net", "motherless.com", "mrdeepfakes.com", "myvidster.com",
     "noodlemagazine.com", "nuvid.com", "onlyfans.com", "perfectgirls.net", "pornhd.com",
     "pornhub.org", "pornhub.com", "pornteengirl.com", "porntube.com", "pornz.com",
     # R-T
-    "redtube.com", "spankbang.com", "sunporno.com", "tnaflix.com", "tube8.com", "tubepleasure.com",
+    "redtube.net", "spankbang.com", "sunporno.com", "tnaflix.com", "tube8.es", "tubepleasure.com",
     "txxx.com", "txnhh.com",
     # U-Z & X-sites
     "vidmax.com", "vxxx.com", "worldstarhiphop.com", "xanimu.com", "xcafe.com", "xhamster.com",
     "xhamster.desi", "xhamster43.desi", "xnxx.com", "xvideos.com", "xtube.com", "xvideos.es",
-    "xvideos.fr", "xv1deos.com", "xxxy.pro", "youjizz.com", "youporn.com", "ytporn.com"
+    "xvideos.fr", "xv1deos.com", "xxxy.pro", "youjizz.com", "you-porn.com", "ytporn.com"
 ]
 
 # --- Force Subscription Configuration ---
