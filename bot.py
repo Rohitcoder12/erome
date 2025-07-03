@@ -34,11 +34,11 @@ MAINTAINED_BY_URL = "https://t.me/Rexonblack" # CHANGE THIS to your Telegram pro
 SUPPORTED_SITES = [
     # A-F
     "adultswim.com", "anysex.com", "beeg.com", "bravotube.net", "camwhores.tv", "camsoda.com", "chaturbate.com",
-    "desitube.com", "drporn.com", "dtube.video", "e-hentai.org", "empflix.com", "eporner.com", "erome.com",
+    "desitube.com", "drporn.com", "xHamster19.com", "e-hentai.org", "empflix.com", "eporner.com", "erome.com",
     "erome.io", "exhentai.org", "extremetube.com", "fapbox.com",
     # G-P
-    "gaytube.com", "hclips.com", "hentai-foundry.com", "hentaivideos.net", "hentaistream.xxx", "hottystop.com",
-    "iqtube.com", "ivxxx.com", "keezmovies.com", "livejasmin.com", "manyvids.com", "metacafe.com", "mofosex.com",
+    "redtube.net", "hclips.com", "hentai-foundry.com", "hentaivideos.net", "hentaistream.xxx", "hottystop.com",
+    "iqtube.com", "ivxxx.com", "keezmovies.com", "livejasmin.com", "manyvids.com", "metacafe.com", "mofosex.net",
     "motherless.com", "mrdeepfakes.com", "myvidster.com", "noodlemagazine.com", "nuvid.com", "onlyfans.com",
     "perfectgirls.net", "pornhd.com", "pornhub.org", "pornhub.com", "pornteengirl.com", "porntube.com", "pornz.com",
     # R-T
