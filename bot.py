@@ -32,7 +32,7 @@ SUPPORTED_SITES = [
     # A-F
     "adultswim.com", "anysex.com", "beeg.com", "bravotube.net", "camwhores.tv", "camsoda.com",
     "chaturbate.com", "desitube.com", "drporn.com", "dtube.video", "e-hentai.org", "empflix.com",
-    "eporner.com", "erome.com", "erome.io", "exhentai.org", "xHamster19.com", "fapbox.com",
+    "eporner.com", "erome.com", "erome.io", "exhentai.org", "xhamster19.com", "fapbox.com",
     # G-P
     "gaytube.com", "hclips.com", "hentai-foundry.com", "hentaivideos.net", "hentaistream.xxx",
     "hottystop.com", "hclips.com", "iqtube.com", "ivxxx.com", "keezmovies.com", "livejasmin.com",
