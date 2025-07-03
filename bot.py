@@ -27,8 +27,8 @@ DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
 DOWNLOAD_LOCATION = "./downloads/"
 
 # --- Start Message Configuration (EDIT THESE) ---
-START_PHOTO_URL = "https://i.ibb.co/tZJc5Fh/RX-Downloader-BOT-logo.png"
-MAINTAINED_BY_URL = "https://t.me/your_username" # CHANGE THIS to your Telegram profile link
+START_PHOTO_URL = "https://telegra.ph/Wow-07-03-5"
+MAINTAINED_BY_URL = "https://t.me/Rexonblack" # CHANGE THIS to your Telegram profile link
 
 # --- Expanded List of Supported Sites ---
 SUPPORTED_SITES = [
