@@ -93,7 +93,8 @@ async def start_command(client, message):
     try:
         await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=message.from_user.id)
     except UserNotParticipant:
-        await message.reply_text("Join our channel to use me.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]_])); return
+        # --- FIX: Removed the stray underscore here ---
+        await message.reply_text("Join our channel to use me.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])); return
     except Exception: pass
     if users_collection: users_collection.update_one({"_id":message.from_user.id},{"$set":{"first_name":message.from_user.first_name,"last_name":message.from_user.last_name,"username":message.from_user.username}},upsert=True)
     start_text = ("» **I'M RX Downloader BOT**\n\n" + "📥 **I CAN DOWNLOAD VIDEOS FROM:**\n" + "• YOUTUBE, INSTAGRAM, TIKTOK\n" + "• PORNHUB, XVIDEOS, XNXX\n" + "• AND 1000+ OTHER SITES!\n\n" + "🚀 **JUST SEND ME A LINK!**")
@@ -164,23 +165,23 @@ async def main_message_handler(client, message):
         all_users = [u['_id'] for u in users_collection.find({}, {'_id': 1})]
         total, success, failed = len(all_users), 0, 0
         status_msg = await message.reply_text(f"Broadcasting to {total} users...")
-        for i, user in enumerate(all_users):
+        for i, user_id_to_send in enumerate(all_users):
             try:
-                await message.copy(chat_id=user); success += 1
+                await message.copy(chat_id=user_id_to_send)
+                success += 1
             except (UserIsBlocked, InputUserDeactivated): failed += 1
-            except Exception as e: failed += 1; print(f"Broadcast error to {user}: {e}")
+            except Exception as e: failed += 1; print(f"Broadcast error to {user_id_to_send}: {e}")
             if (i + 1) % 20 == 0 or (i + 1) == total:
                 await status_msg.edit_text(f"**Broadcast Progress**\n\nSent: {success}/{total}\nFailed: {failed}"); await asyncio.sleep(1)
         await status_msg.edit_text(f"✅ **Broadcast Complete**\nSent: {success}\nFailed: {failed}"); return
-
     await link_processor(client, message)
 
 async def link_processor(client, message):
     user_id = message.from_user.id
     try:
-        # --- FIX: Added the correct InlineKeyboardMarkup ---
         await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
     except UserNotParticipant:
+        # --- FIX: Removed the stray underscore here ---
         await message.reply_text("Join our channel to use me.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])); return
     except Exception as e: print(f"Force sub error: {e}"); await message.reply_text("Error checking membership."); return
     global DOWNLOAD_IN_PROGRESS
