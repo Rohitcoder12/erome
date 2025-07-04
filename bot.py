@@ -48,33 +48,20 @@ DEFAULT_SITES = [
 ]
 
 # --- State Management & DB Setup ---
-DOWNLOAD_IN_PROGRESS = False
-CANCELLATION_REQUESTS = set()
-SITES_LIST = []
-BROADCAST_IN_PROGRESS = {}
-
-# --- DB Connection ---
+DOWNLOAD_IN_PROGRESS = False; CANCELLATION_REQUESTS = set()
+SITES_LIST = []; BROADCAST_IN_PROGRESS = {}
 try:
     db_client = MongoClient(MONGO_URI)
     db = db_client.get_database("VideoBotDB")
-    users_collection = db.get_collection("users")
-    downloads_collection = db.get_collection("downloads_history")
-    sites_collection = db.get_collection("supported_sites")
-    print("Successfully connected to MongoDB.")
-except Exception as e:
-    print(f"Error connecting to MongoDB: {e}")
-    db_client = None
-
-# --- Pyrogram Client & Web Server ---
+    users_collection = db.get_collection("users"); downloads_collection = db.get_collection("downloads_history")
+    sites_collection = db.get_collection("supported_sites"); print("Successfully connected to MongoDB.")
+except Exception as e: print(f"Error connecting to MongoDB: {e}"); db_client = None
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 web_server = Flask(__name__)
 
-# --- Web Server Route ---
 @web_server.route('/')
-def health_check():
-    return "Bot is alive!", 200
+def health_check(): return "Bot is alive!", 200
 
-# --- Helper Functions ---
 def create_progress_bar(percentage):
     bar_length=10; filled_length=int(bar_length*percentage//100)
     return '🟢'*filled_length+'⚪'*(bar_length-filled_length)
@@ -92,31 +79,23 @@ def progress_hook(d, m, user_id):
     if d['status']=='downloading' and (total_bytes := d.get('total_bytes') or d.get('total_bytes_estimate')):
         p=(db:=d.get('downloaded_bytes'))/total_bytes*100
         if(time.time()-globals().get('last_update_time',0))>2:
-            try:asyncio.create_task(m.edit_text(f"⏳ **Downloading...**\n{create_progress_bar(p)} {p:.2f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]])));globals()['last_update_time']=time.time()
+            try:asyncio.create_task(m.edit_text(f"⏳ Downloading... {p:.1f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]])));globals()['last_update_time']=time.time()
             except:pass
 async def upload_progress_callback(c, t, m, user_id):
     if user_id in CANCELLATION_REQUESTS: raise Exception("Upload cancelled by user.")
     p=c/t*100
     if(time.time()-globals().get('last_upload_update_time',0))>2:
-        try:await m.edit_text(f"⏫ **Uploading...**\n{create_progress_bar(p)} {p:.2f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]));globals()['last_upload_update_time']=time.time()
+        try:await m.edit_text(f"⏫ Uploading... {p:.1f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]));globals()['last_upload_update_time']=time.time()
         except:pass
 
-# --- Bot Commands ---
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
-    user_id = message.from_user.id
     try:
-        member = await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
-        if member.status in [ChatMemberStatus.BANNED, ChatMemberStatus.RESTRICTED]:
-            await message.reply_text("You are banned from using this bot."); return
+        await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=message.from_user.id)
     except UserNotParticipant:
-        join_button = InlineKeyboardMarkup([[InlineKeyboardButton("Join Our Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])
-        await message.reply_text("To use this bot, you must join our channel. After joining, please send /start again.", reply_markup=join_button); return
-    except Exception as e: print(f"Force sub error: {e}"); await message.reply_text("An error occurred checking membership."); return
-    if users_collection is not None:
-        ud={"_id":message.from_user.id,"first_name":message.from_user.first_name,"last_name":message.from_user.last_name,"username":message.from_user.username}
-        try: users_collection.update_one({"_id":message.from_user.id},{"$set":ud},upsert=True)
-        except Exception as e: print(f"DB Error: {e}")
+        await message.reply_text("Join our channel to use me.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]_])); return
+    except Exception: pass
+    if users_collection: users_collection.update_one({"_id":message.from_user.id},{"$set":{"first_name":message.from_user.first_name,"last_name":message.from_user.last_name,"username":message.from_user.username}},upsert=True)
     start_text = ("» **I'M RX Downloader BOT**\n\n" + "📥 **I CAN DOWNLOAD VIDEOS FROM:**\n" + "• YOUTUBE, INSTAGRAM, TIKTOK\n" + "• PORNHUB, XVIDEOS, XNXX\n" + "• AND 1000+ OTHER SITES!\n\n" + "🚀 **JUST SEND ME A LINK!**")
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("• SUPPORTED SITES", callback_data="show_sites_list"), InlineKeyboardButton("• MAINTAINED BY", url=MAINTAINED_BY_URL)]])
     await message.reply_photo(photo=START_PHOTO_URL, caption=start_text, reply_markup=keyboard)
@@ -128,11 +107,9 @@ async def help_command(client, message):
     help_text = ("**How to use RX Downloader Bot:**\n\n" + "1. **Send a Link:** Simply paste a video link.\n" + "2. **Check Supported Sites:** Use /sites to see the full list.\n" + "3. **Cancel a Download:** Click the 'Cancel' button.\n" + "If a link fails, use the 'Report Link' button to help me improve!")
     await message.reply_text(help_text)
 
-# --- Admin Commands ---
 @app.on_message(filters.command("stats") & filters.user(OWNER_ID))
 async def stats_command(client, message):
-    if not users_collection: await message.reply_text("Database not connected."); return
-    total_users = users_collection.count_documents({})
+    total_users = users_collection.count_documents({}) if users_collection else 0
     await message.reply_text(f"📊 **Bot Stats**\n\nTotal Users: `{total_users}`")
 @app.on_message(filters.command("addsite") & filters.user(OWNER_ID))
 async def add_site_command(client, message):
@@ -163,7 +140,6 @@ async def cancel_broadcast_command(client, message):
         await message.reply_text("Broadcast mode cancelled.")
     else: await message.reply_text("You are not in broadcast mode.")
 
-# --- Callback Handlers ---
 @app.on_callback_query(filters.regex("^show_sites_list$"))
 async def show_sites_handler(client, c_q): await c_q.answer(); await c_q.message.reply_text(get_sites_list_text())
 @app.on_callback_query(filters.regex("^report_"))
@@ -180,7 +156,6 @@ async def cancel_handler(client, c_q):
     if c_q.from_user.id != user_id: await c_q.answer("This is not for you!", show_alert=True); return
     CANCELLATION_REQUESTS.add(user_id); await c_q.answer("Cancellation request sent.", show_alert=False); await c_q.message.edit_text("🤚 **Cancellation requested...**")
 
-# --- Main Message Handler for non-commands ---
 @app.on_message(filters.private & ~filters.command(prefixes="/"))
 async def main_message_handler(client, message):
     user_id = message.from_user.id
@@ -189,12 +164,11 @@ async def main_message_handler(client, message):
         all_users = [u['_id'] for u in users_collection.find({}, {'_id': 1})]
         total, success, failed = len(all_users), 0, 0
         status_msg = await message.reply_text(f"Broadcasting to {total} users...")
-        for i, user_id_to_send in enumerate(all_users):
+        for i, user in enumerate(all_users):
             try:
-                await message.copy(chat_id=user_id_to_send)
-                success += 1
+                await message.copy(chat_id=user); success += 1
             except (UserIsBlocked, InputUserDeactivated): failed += 1
-            except Exception as e: failed += 1; print(f"Broadcast error to {user_id_to_send}: {e}")
+            except Exception as e: failed += 1; print(f"Broadcast error to {user}: {e}")
             if (i + 1) % 20 == 0 or (i + 1) == total:
                 await status_msg.edit_text(f"**Broadcast Progress**\n\nSent: {success}/{total}\nFailed: {failed}"); await asyncio.sleep(1)
         await status_msg.edit_text(f"✅ **Broadcast Complete**\nSent: {success}\nFailed: {failed}"); return
@@ -204,9 +178,10 @@ async def main_message_handler(client, message):
 async def link_processor(client, message):
     user_id = message.from_user.id
     try:
+        # --- FIX: Added the correct InlineKeyboardMarkup ---
         await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
     except UserNotParticipant:
-        await message.reply_text("Join our channel to use me.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]_])); return
+        await message.reply_text("Join our channel to use me.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])); return
     except Exception as e: print(f"Force sub error: {e}"); await message.reply_text("Error checking membership."); return
     global DOWNLOAD_IN_PROGRESS
     if DOWNLOAD_IN_PROGRESS: await message.reply_text("🤚 **Bot is busy!**"); return
