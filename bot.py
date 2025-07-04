@@ -93,7 +93,6 @@ async def start_command(client, message):
     try:
         await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=message.from_user.id)
     except UserNotParticipant:
-        # --- FIX: Removed the stray underscore here ---
         await message.reply_text("Join our channel to use me.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])); return
     except Exception: pass
     if users_collection: users_collection.update_one({"_id":message.from_user.id},{"$set":{"first_name":message.from_user.first_name,"last_name":message.from_user.last_name,"username":message.from_user.username}},upsert=True)
@@ -157,7 +156,8 @@ async def cancel_handler(client, c_q):
     if c_q.from_user.id != user_id: await c_q.answer("This is not for you!", show_alert=True); return
     CANCELLATION_REQUESTS.add(user_id); await c_q.answer("Cancellation request sent.", show_alert=False); await c_q.message.edit_text("🤚 **Cancellation requested...**")
 
-@app.on_message(filters.private & ~filters.command(prefixes="/"))
+# --- THIS IS THE CORRECTED FILTER FOR NON-COMMAND MESSAGES ---
+@app.on_message(filters.private & filters.text & ~filters.command)
 async def main_message_handler(client, message):
     user_id = message.from_user.id
     if user_id in BROADCAST_IN_PROGRESS:
@@ -174,6 +174,7 @@ async def main_message_handler(client, message):
             if (i + 1) % 20 == 0 or (i + 1) == total:
                 await status_msg.edit_text(f"**Broadcast Progress**\n\nSent: {success}/{total}\nFailed: {failed}"); await asyncio.sleep(1)
         await status_msg.edit_text(f"✅ **Broadcast Complete**\nSent: {success}\nFailed: {failed}"); return
+
     await link_processor(client, message)
 
 async def link_processor(client, message):
@@ -181,7 +182,6 @@ async def link_processor(client, message):
     try:
         await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
     except UserNotParticipant:
-        # --- FIX: Removed the stray underscore here ---
         await message.reply_text("Join our channel to use me.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])); return
     except Exception as e: print(f"Force sub error: {e}"); await message.reply_text("Error checking membership."); return
     global DOWNLOAD_IN_PROGRESS
@@ -192,9 +192,35 @@ async def link_processor(client, message):
     DOWNLOAD_IN_PROGRESS = True; CANCELLATION_REQUESTS.discard(user_id)
     status_msg = await message.reply_text("✅ **URL received, starting...**", quote=True, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     try:
-        await process_video_url(url, {}, message, status_msg)
+        if "erome.com" in url or "erome.io" in url:
+            await handle_erome_album(url, message, status_msg)
+        else:
+            await process_video_url(url, {}, message, status_msg)
     except Exception as e: print(f"--- LINK HANDLER ERROR ---\n{traceback.format_exc()}\n---"); await status_msg.edit_text(f"❌ Critical error: {e}")
     finally: CANCELLATION_REQUESTS.discard(user_id); DOWNLOAD_IN_PROGRESS = False
+
+async def handle_erome_album(url, message, status_message):
+    album_limit = 15; user_id = message.from_user.id;
+    await status_message.edit_text("🔎 Erome album detected, checking content...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+    meta_opts = {'extract_flat': True, 'quiet': True, 'playlistend': album_limit}
+    with YoutubeDL(meta_opts) as ydl: info = ydl.extract_info(url, download=False)
+    original_entries, content_to_process, seen_filenames = info.get('entries', []), [], set()
+    for entry in original_entries:
+        filename = entry.get('url', '').split('/')[-1]
+        if filename and filename not in seen_filenames: content_to_process.append(entry); seen_filenames.add(filename)
+    if not content_to_process: await status_message.edit_text("❌ No content found in this Erome album."); return
+    content_count = len(content_to_process)
+    await status_message.edit_text(f"✅ Found **{content_count}** unique items (limit {album_limit}). Processing...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+    for i, entry in enumerate(content_to_process, 1):
+        if user_id in CANCELLATION_REQUESTS: await status_message.edit_text("✅ **Album processing cancelled.**"); break
+        entry_url = entry['url']
+        if any(ext in entry_url for ext in ['.jpg', '.jpeg', '.png', '.gif']):
+            await message.reply_photo(photo=entry_url, caption=f"Photo {i}/{content_count}")
+        else:
+            await status_message.edit_text(f"Downloading video **{i}/{content_count}**...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+            await process_video_url(entry_url, {}, message, status_message, is_album_item=True)
+    if user_id not in CANCELLATION_REQUESTS: await status_message.edit_text(f"✅ Finished processing all {content_count} items!", reply_markup=None); await asyncio.sleep(5)
+    await status_message.delete()
 
 async def process_video_url(url, ydl_opts_override, original_message, status_message, is_album_item=False):
     video_path, thumbnail_path = None, None; user_id = original_message.from_user.id
@@ -227,8 +253,8 @@ async def process_video_url(url, ydl_opts_override, original_message, status_mes
         print(f"--- PROCESS_VIDEO_URL ERROR ---\n{traceback.format_exc()}\n---")
         if not is_album_item: await status_message.edit_text(error_message, reply_markup=report_markup)
     finally:
-        if video_path: os.remove(video_path)
-        if thumbnail_path: os.remove(thumbnail_path)
+        if video_path and os.path.exists(video_path): os.remove(video_path)
+        if thumbnail_path and os.path.exists(thumbnail_path): os.remove(thumbnail_path)
         if not is_album_item:
             await asyncio.sleep(5)
             try: await status_message.delete()
