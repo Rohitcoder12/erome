@@ -32,7 +32,6 @@ START_PHOTO_URL = "https://telegra.ph/Wow-07-03-5"
 MAINTAINED_BY_URL = "https://t.me/Rexonblood"
 FORCE_SUB_CHANNEL = "@dailynewswalla"
 
-# --- Default Supported Sites ---
 DEFAULT_SITES = [
     "rock.porn", "hdsex.org", "beeg.com", "bravotube.net", "camwhores.tv", "camsoda.com", "chaturbate.com",
     "desitube.com", "drporn.com", "dtube.video", "e-hentai.org", "empflix.com", "eporner.com", "erome.com",
@@ -56,15 +55,12 @@ try:
     users_collection = db.get_collection("users"); downloads_collection = db.get_collection("downloads_history")
     sites_collection = db.get_collection("supported_sites"); print("Successfully connected to MongoDB.")
 except Exception as e: print(f"Error connecting to MongoDB: {e}"); db_client = None
-
-# --- Pyrogram Client & Flask Server Setup ---
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-server = Flask(__name__)
+web_server = Flask(__name__)
 
-@server.route('/')
-def health_check(): return "Bot and Web Server are alive!", 200
+@web_server.route('/')
+def health_check(): return "Bot is alive!", 200
 
-# --- Helper Functions ---
 def create_progress_bar(percentage):
     bar_length=10; filled_length=int(bar_length*percentage//100)
     return '🟢'*filled_length+'⚪'*(bar_length-filled_length)
@@ -91,18 +87,14 @@ async def upload_progress_callback(c, t, m, user_id):
         try:await m.edit_text(f"⏫ Uploading... {p:.1f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]));globals()['last_upload_update_time']=time.time()
         except:pass
 
-# --- Bot Command Handlers ---
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     try:
         await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=message.from_user.id)
     except UserNotParticipant:
         await message.reply_text("Join our channel to use me.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])); return
-    except Exception as e:
-        print(f"Force sub check failed for user {message.from_user.id}: {e}")
-        await message.reply_text("An error occurred checking your membership status. The bot admin has been notified."); return
-    if users_collection:
-        users_collection.update_one({"_id":message.from_user.id},{"$set":{"first_name":message.from_user.first_name,"last_name":message.from_user.last_name,"username":message.from_user.username}},upsert=True)
+    except Exception: pass
+    if users_collection: users_collection.update_one({"_id":message.from_user.id},{"$set":{"first_name":message.from_user.first_name,"last_name":message.from_user.last_name,"username":message.from_user.username}},upsert=True)
     start_text = ("» **I'M RX Downloader BOT**\n\n" + "📥 **I CAN DOWNLOAD VIDEOS FROM:**\n" + "• YOUTUBE, INSTAGRAM, TIKTOK\n" + "• PORNHUB, XVIDEOS, XNXX\n" + "• AND 1000+ OTHER SITES!\n\n" + "🚀 **JUST SEND ME A LINK!**")
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("• SUPPORTED SITES", callback_data="show_sites_list"), InlineKeyboardButton("• MAINTAINED BY", url=MAINTAINED_BY_URL)]])
     await message.reply_photo(photo=START_PHOTO_URL, caption=start_text, reply_markup=keyboard)
@@ -110,7 +102,6 @@ async def start_command(client, message):
 @app.on_message(filters.command("sites") & filters.private)
 async def sites_command(client, message): await message.reply_text(get_sites_list_text())
 
-# --- Admin Command Handlers ---
 @app.on_message(filters.command("addsite") & filters.user(OWNER_ID))
 async def add_site_command(client, message):
     try:
@@ -129,7 +120,6 @@ async def del_site_command(client, message):
         else: await message.reply_text(f"`{domain}` was not found.")
     except Exception: await message.reply_text("Usage: `/delsite example.com`")
 
-# --- Callback Query Handlers ---
 @app.on_callback_query(filters.regex("^show_sites_list$"))
 async def show_sites_handler(client, c_q): await c_q.answer(); await c_q.message.reply_text(get_sites_list_text())
 @app.on_callback_query(filters.regex("^report_"))
@@ -149,9 +139,10 @@ async def cancel_handler(client, c_q):
     if c_q.from_user.id != user_id: await c_q.answer("This is not for you!", show_alert=True); return
     CANCELLATION_REQUESTS.add(user_id); await c_q.answer("Cancellation request sent.", show_alert=False); await c_q.message.edit_text("🤚 **Cancellation requested...**")
 
-# --- Main Message Handler for Links ---
-@app.on_message(filters.private & filters.text & ~filters.command())
+# --- CORRECTED FINAL HANDLER for all other private text messages ---
+@app.on_message(filters.private & filters.text)
 async def link_handler(client, message):
+    # This handler will not catch commands, because they are handled by the specific handlers above.
     user_id = message.from_user.id
     try:
         await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
@@ -161,7 +152,7 @@ async def link_handler(client, message):
     global DOWNLOAD_IN_PROGRESS
     if DOWNLOAD_IN_PROGRESS: await message.reply_text("🤚 **Bot is busy!**"); return
     url = message.text.strip()
-    if not url.startswith(('http://', 'https://')): await message.reply_text("Please send a valid link."); return
+    if not url.startswith(('http://', 'https://')): await message.reply_text("Please send a valid link or use /start."); return
     if not any(site in url for site in SITES_LIST): await message.reply_text("❌ **Sorry, this site is not supported.**\nUse /sites to check."); return
     DOWNLOAD_IN_PROGRESS = True; CANCELLATION_REQUESTS.discard(user_id)
     status_msg = await message.reply_text("✅ **URL received, starting...**", quote=True, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
@@ -257,7 +248,7 @@ if __name__ == "__main__":
     load_sites_from_db()
     
     # Run the web server in a background thread
-    threading.Thread(target=lambda: server.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000))), daemon=True).start()
+    threading.Thread(target=lambda: web_server.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000))), daemon=True).start()
     
     # Run the Pyrogram bot. This is the main process.
     print("Starting Pyrogram bot...")
