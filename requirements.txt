@@ -3,5 +3,5 @@ tgcrypto
 yt-dlp
 requests
 Flask
-pymongo
+pymongo[srv]
 Pillow
