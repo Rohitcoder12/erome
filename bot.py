@@ -5,7 +5,6 @@ import asyncio
 import threading
 import traceback
 import io
-import base64
 from itertools import zip_longest
 from yt_dlp import YoutubeDL
 from pyrogram import Client, filters
@@ -27,11 +26,13 @@ MONGO_URI = os.environ.get("MONGO_URI")
 DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
 DOWNLOAD_LOCATION = "./downloads/"
 OWNER_ID = int(os.environ.get("OWNER_ID"))
-REPORT_CHANNEL_ID = int(os.environ.get("REPORT_CHANNEL_ID"))
+# REPORT_CHANNEL_ID is no longer needed
+
+# --- Start Message Configuration ---
 START_PHOTO_URL = "https://telegra.ph/Wow-07-03-5"
 MAINTAINED_BY_URL = "https://t.me/Rexonblood"
-FORCE_SUB_CHANNEL = "@dailynewswalla"
 
+# --- Default Supported Sites (Used only if DB is empty) ---
 DEFAULT_SITES = [
     "rock.porn", "hdsex.org", "beeg.com", "bravotube.net", "camwhores.tv", "camsoda.com", "chaturbate.com",
     "desitube.com", "drporn.com", "dtube.video", "e-hentai.org", "empflix.com", "eporner.com", "erome.com",
@@ -46,21 +47,26 @@ DEFAULT_SITES = [
     "instagram.com", "tiktok.com"
 ]
 
+# --- Force Subscription Configuration ---
+FORCE_SUB_CHANNEL = "@dailynewswalla"
+
 # --- State Management & DB Setup ---
-DOWNLOAD_IN_PROGRESS = False; CANCELLATION_REQUESTS = set()
+DOWNLOAD_IN_PROGRESS = False
+CANCELLATION_REQUESTS = set()
 SITES_LIST = []
+server = Flask(__name__)
+@server.route('/')
+def health_check(): return "Bot and Web Server are alive!", 200
+def run_server(): server.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
 try:
     db_client = MongoClient(MONGO_URI)
     db = db_client.get_database("VideoBotDB")
     users_collection = db.get_collection("users"); downloads_collection = db.get_collection("downloads_history")
     sites_collection = db.get_collection("supported_sites"); print("Successfully connected to MongoDB.")
-except Exception as e: print(f"Error connecting to MongoDB: {e}"); db_client = None
+except Exception as e: print(f"Error connecting to MongoDB: {e}"); exit()
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-web_server = Flask(__name__)
 
-@web_server.route('/')
-def health_check(): return "Bot is alive!", 200
-
+# --- Helper Functions ---
 def create_progress_bar(percentage):
     bar_length=10; filled_length=int(bar_length*percentage//100)
     return '🟢'*filled_length+'⚪'*(bar_length-filled_length)
@@ -78,77 +84,76 @@ def progress_hook(d, m, user_id):
     if d['status']=='downloading' and (total_bytes := d.get('total_bytes') or d.get('total_bytes_estimate')):
         p=(db:=d.get('downloaded_bytes'))/total_bytes*100
         if(time.time()-globals().get('last_update_time',0))>2:
-            try:asyncio.create_task(m.edit_text(f"⏳ Downloading... {p:.1f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]])));globals()['last_update_time']=time.time()
+            try:asyncio.create_task(m.edit_text(f"⏳ **Downloading...**\n{create_progress_bar(p)} {p:.2f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]])));globals()['last_update_time']=time.time()
             except:pass
 async def upload_progress_callback(c, t, m, user_id):
     if user_id in CANCELLATION_REQUESTS: raise Exception("Upload cancelled by user.")
     p=c/t*100
     if(time.time()-globals().get('last_upload_update_time',0))>2:
-        try:await m.edit_text(f"⏫ Uploading... {p:.1f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]));globals()['last_upload_update_time']=time.time()
+        try:await m.edit_text(f"⏫ **Uploading...**\n{create_progress_bar(p)} {p:.2f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]));globals()['last_upload_update_time']=time.time()
         except:pass
 
-# --- CORRECTED START COMMAND ---
+# --- Bot Commands ---
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
+    user_id = message.from_user.id
     try:
-        member = await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=message.from_user.id)
+        member = await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
         if member.status in [ChatMemberStatus.BANNED, ChatMemberStatus.RESTRICTED]:
             await message.reply_text("You are banned from using this bot."); return
     except UserNotParticipant:
-        await message.reply_text("Join our channel to use me.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])); return
+        join_button = InlineKeyboardMarkup([[InlineKeyboardButton("Join Our Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]]])
+        await message.reply_text("To use this bot, you must join our channel. After joining, please send /start again.", reply_markup=join_button); return
     except Exception as e:
         print(f"Force sub check failed for user {message.from_user.id}: {e}")
-        # Inform the user that something went wrong
-        await message.reply_text("An error occurred while checking your membership status. The bot admin has been notified."); return
-
+        await message.reply_text("An error occurred while checking your membership status. Please ensure the bot is an admin in the channel."); return
+    u = message.from_user
     if users_collection is not None:
-        ud = {"_id":message.from_user.id,"first_name":message.from_user.first_name,"last_name":message.from_user.last_name,"username":message.from_user.username}
-        try: users_collection.update_one({"_id":message.from_user.id},{"$set":ud},upsert=True)
-        except Exception as e: print(f"DB Error on start: {e}")
-        
+        ud={"_id":u.id,"first_name":u.first_name,"last_name":u.last_name,"username":u.username,"last_started":datetime.now(timezone.utc)}
+        try:users_collection.update_one({"_id":u.id},{"$set":ud},upsert=True);print(f"User {u.id} saved.")
+        except Exception as e:print(f"DB Error: {e}")
     start_text = ("» **I'M RX Downloader BOT**\n\n" + "📥 **I CAN DOWNLOAD VIDEOS FROM:**\n" + "• YOUTUBE, INSTAGRAM, TIKTOK\n" + "• PORNHUB, XVIDEOS, XNXX\n" + "• AND 1000+ OTHER SITES!\n\n" + "🚀 **JUST SEND ME A LINK!**")
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("• SUPPORTED SITES", callback_data="show_sites_list"), InlineKeyboardButton("• MAINTAINED BY", url=MAINTAINED_BY_URL)]])
     await message.reply_photo(photo=START_PHOTO_URL, caption=start_text, reply_markup=keyboard)
 
 @app.on_message(filters.command("sites") & filters.private)
-async def sites_command(client, message): await message.reply_text(get_sites_list_text())
+async def sites_command(client, message):
+    sites_text = get_sites_list_text()
+    await message.reply_text(sites_text)
 
 @app.on_message(filters.command("addsite") & filters.user(OWNER_ID))
 async def add_site_command(client, message):
     try:
         domain = message.text.split(" ", 1)[1].strip().lower()
+        if not domain: await message.reply_text("Usage: `/addsite example.com`"); return
         if sites_collection.find_one({"domain": domain}): await message.reply_text(f"`{domain}` is already in the list."); return
         sites_collection.insert_one({"domain": domain}); SITES_LIST.append(domain)
-        await message.reply_text(f"✅ Added `{domain}`.")
-    except Exception: await message.reply_text("Usage: `/addsite example.com`")
+        await message.reply_text(f"✅ Successfully added `{domain}`.")
+    except IndexError: await message.reply_text("Usage: `/addsite example.com`")
+    except Exception as e: await message.reply_text(f"An error occurred: {e}")
+
 @app.on_message(filters.command("delsite") & filters.user(OWNER_ID))
 async def del_site_command(client, message):
     try:
         domain = message.text.split(" ", 1)[1].strip().lower()
-        if sites_collection.delete_one({"domain": domain}).deleted_count > 0:
+        if not domain: await message.reply_text("Usage: `/delsite example.com`"); return
+        result = sites_collection.delete_one({"domain": domain})
+        if result.deleted_count > 0:
             if domain in SITES_LIST: SITES_LIST.remove(domain)
-            await message.reply_text(f"✅ Removed `{domain}`.")
+            await message.reply_text(f"✅ Successfully removed `{domain}`.")
         else: await message.reply_text(f"`{domain}` was not found.")
-    except Exception: await message.reply_text("Usage: `/delsite example.com`")
+    except IndexError: await message.reply_text("Usage: `/delsite example.com`")
+    except Exception as e: await message.reply_text(f"An error occurred: {e}")
 
 @app.on_callback_query(filters.regex("^show_sites_list$"))
-async def show_sites_handler(client, c_q): await c_q.answer(); await c_q.message.reply_text(get_sites_list_text())
-@app.on_callback_query(filters.regex("^report_"))
-async def report_link_handler(client, c_q):
-    try:
-        encoded_url = c_q.data.split("_", 1)[1]
-        missing_padding = len(encoded_url) % 4
-        if missing_padding: encoded_url += '=' * (4 - missing_padding)
-        url = base64.urlsafe_b64decode(encoded_url).decode('utf-8')
-        await client.send_message(REPORT_CHANNEL_ID, f"🚨 **Link Report**\n\n**User:** {c_q.from_user.mention} (`{c_q.from_user.id}`)\n**URL:** `{url}`")
-        await c_q.answer("✅ Thank you! The link has been reported.", show_alert=True)
-        await c_q.edit_message_reply_markup(None)
-    except Exception as e: print(f"Report error: {e}"); await c_q.answer("Could not send report.", show_alert=True)
+async def show_sites_handler(client, callback_query):
+    await callback_query.answer(); await callback_query.message.reply_text(get_sites_list_text())
+
 @app.on_callback_query(filters.regex("^cancel_"))
-async def cancel_handler(client, c_q):
-    user_id = int(c_q.data.split("_")[1])
-    if c_q.from_user.id != user_id: await c_q.answer("This is not for you!", show_alert=True); return
-    CANCELLATION_REQUESTS.add(user_id); await c_q.answer("Cancellation request sent.", show_alert=False); await c_q.message.edit_text("🤚 **Cancellation requested...**")
+async def cancel_handler(client, callback_query):
+    user_id = int(callback_query.data.split("_")[1]);
+    if callback_query.from_user.id != user_id: await callback_query.answer("This is not for you!", show_alert=True); return
+    CANCELLATION_REQUESTS.add(user_id); await callback_query.answer("Cancellation request sent.", show_alert=False); await callback_query.message.edit_text("🤚 **Cancellation requested...** Please wait.")
 
 @app.on_message(filters.private & filters.text & ~filters.command())
 async def link_handler(client, message):
@@ -168,18 +173,12 @@ async def link_handler(client, message):
     try:
         if "erome.com" in url or "erome.io" in url: await handle_erome_album(url, message, status_msg)
         else: await process_video_url(url, {}, message, status_msg)
-    except Exception as e:
-        print(f"--- LINK HANDLER ERROR ---\n{traceback.format_exc()}\n---")
-        # Use the corrected check for the error message
-        if "Collection objects do not implement" in str(e):
-            await status_msg.edit_text("❌ A database error occurred. The admin has been notified.")
-        else:
-            await status_msg.edit_text(f"❌ Critical error: {type(e).__name__}")
+    except Exception as e: print(f"--- LINK HANDLER ERROR ---\n{traceback.format_exc()}\n---"); await status_msg.edit_text(f"❌ Critical error: {e}")
     finally: CANCELLATION_REQUESTS.discard(user_id); DOWNLOAD_IN_PROGRESS = False
 
 async def handle_erome_album(url, message, status_message):
     album_limit = 15; user_id = message.from_user.id
-    await status_message.edit_text("🔎 Erome album detected...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+    await status_message.edit_text("🔎 Erome album detected, checking content...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     meta_opts = {'extract_flat': True, 'quiet': True, 'playlistend': album_limit}
     try:
         with YoutubeDL(meta_opts) as ydl: info = ydl.extract_info(url, download=False)
@@ -190,7 +189,7 @@ async def handle_erome_album(url, message, status_message):
         filename = entry.get('url', '').split('/')[-1]
         if filename and filename not in seen_filenames: content_to_process.append(entry); seen_filenames.add(filename)
     content_count = len(content_to_process)
-    await status_message.edit_text(f"✅ Found **{content_count}** unique items. Processing...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+    await status_message.edit_text(f"✅ Found **{content_count}** unique items (limit {album_limit}). Processing...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     for i, entry in enumerate(content_to_process, 1):
         if user_id in CANCELLATION_REQUESTS: await status_message.edit_text("✅ **Album processing cancelled.**"); break
         entry_url = entry['url']
@@ -204,14 +203,10 @@ async def handle_erome_album(url, message, status_message):
     try: await status_message.delete()
     except: pass
 
-# --- CORRECTED PROCESS_VIDEO_URL ---
 async def process_video_url(url, ydl_opts_override, original_message, status_message, is_album_item=False):
     video_path, thumbnail_path = None, None; user_id = original_message.from_user.id
-    
-    # --- FIX: Check for DB connection correctly ---
     if downloads_collection is not None:
         downloads_collection.insert_one({"user_id": user_id, "url": url, "status": "processing"})
-        
     ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(id)s.%(ext)s'),'noplaylist':True,'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,user_id)],'max_filesize':450*1024*1024}
     ydl_opts.update(ydl_opts_override)
     try:
@@ -231,14 +226,11 @@ async def process_video_url(url, ydl_opts_override, original_message, status_mes
         if not is_album_item: await status_message.edit_text("✅ **Upload complete!**", reply_markup=None)
         if sent_message and DUMP_CHANNEL_ID != 0: await sent_message.forward(DUMP_CHANNEL_ID)
     except Exception as e:
-        error_message = f"❌ An error occurred: {type(e).__name__}"; report_markup = None
+        error_message = f"❌ An error occurred: {type(e).__name__}"
         if "cancelled by user" in str(e): error_message = "✅ **Operation cancelled."
-        else:
-            if "is larger than" in str(e): error_message = "❌ **Error:** Video is too large."
-            encoded_url = base64.urlsafe_b64encode(url.encode()).decode()
-            report_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🚨 Report Link", callback_data=f"report_{encoded_url}")]])
+        elif "is larger than" in str(e): error_message = "❌ **Error:** Video is too large."
         print(f"--- PROCESS_VIDEO_URL ERROR ---\n{traceback.format_exc()}\n---")
-        if not is_album_item: await status_message.edit_text(error_message, reply_markup=report_markup)
+        if not is_album_item: await status_message.edit_text(error_message, reply_markup=None)
     finally:
         if video_path and os.path.exists(video_path): os.remove(video_path)
         if thumbnail_path and os.path.exists(thumbnail_path): os.remove(thumbnail_path)
