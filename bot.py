@@ -101,7 +101,6 @@ async def start_command(client, message):
 
 @app.on_message(filters.command("sites") & filters.private)
 async def sites_command(client, message): await message.reply_text(get_sites_list_text())
-
 @app.on_message(filters.command("help") & filters.private)
 async def help_command(client, message):
     help_text = ("**How to use RX Downloader Bot:**\n\n" + "1. **Send a Link:** Simply paste a video link.\n" + "2. **Check Supported Sites:** Use /sites to see the full list.\n" + "3. **Cancel a Download:** Click the 'Cancel' button.\n" + "If a link fails, use the 'Report Link' button to help me improve!")
@@ -111,7 +110,6 @@ async def help_command(client, message):
 async def stats_command(client, message):
     total_users = users_collection.count_documents({}) if users_collection else 0
     await message.reply_text(f"📊 **Bot Stats**\n\nTotal Users: `{total_users}`")
-
 @app.on_message(filters.command("addsite") & filters.user(OWNER_ID))
 async def add_site_command(client, message):
     try:
@@ -120,7 +118,6 @@ async def add_site_command(client, message):
         sites_collection.insert_one({"domain": domain}); SITES_LIST.append(domain)
         await message.reply_text(f"✅ Added `{domain}`.")
     except Exception: await message.reply_text("Usage: `/addsite example.com`")
-
 @app.on_message(filters.command("delsite") & filters.user(OWNER_ID))
 async def del_site_command(client, message):
     try:
@@ -130,13 +127,11 @@ async def del_site_command(client, message):
             await message.reply_text(f"✅ Removed `{domain}`.")
         else: await message.reply_text(f"`{domain}` was not found.")
     except Exception: await message.reply_text("Usage: `/delsite example.com`")
-
 @app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
 async def broadcast_command(client, message):
     if message.from_user.id in BROADCAST_IN_PROGRESS: await message.reply_text("Broadcast already in progress. /cancelbroadcast to stop."); return
     BROADCAST_IN_PROGRESS[message.from_user.id] = True
     await message.reply_text("Broadcast mode started. Send the message to broadcast, or /cancelbroadcast.")
-
 @app.on_message(filters.command("cancelbroadcast") & filters.user(OWNER_ID))
 async def cancel_broadcast_command(client, message):
     if message.from_user.id in BROADCAST_IN_PROGRESS:
@@ -161,7 +156,7 @@ async def cancel_handler(client, c_q):
     CANCELLATION_REQUESTS.add(user_id); await c_q.answer("Cancellation request sent.", show_alert=False); await c_q.message.edit_text("🤚 **Cancellation requested...**")
 
 # --- THIS IS THE CORRECTED HANDLER FOR ALL OTHER MESSAGES ---
-@app.on_message(filters.private & ~filters.command(None))
+@app.on_message(filters.private & ~filters.command())
 async def main_message_handler(client, message):
     user_id = message.from_user.id
     if user_id in BROADCAST_IN_PROGRESS:
@@ -177,9 +172,12 @@ async def main_message_handler(client, message):
             if (i + 1) % 20 == 0 or (i + 1) == total:
                 await status_msg.edit_text(f"**Broadcast Progress**\n\nSent: {success}/{total}\nFailed: {failed}"); await asyncio.sleep(1)
         await status_msg.edit_text(f"✅ **Broadcast Complete**\nSent: {success}\nFailed: {failed}"); return
+    
+    # If the message is not for broadcast, and not a command, it must be a link or junk
     await link_processor(client, message)
 
 async def link_processor(client, message):
+    # This function now contains all the link processing logic
     user_id = message.from_user.id
     try:
         await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
@@ -205,24 +203,28 @@ async def handle_erome_album(url, message, status_message):
     album_limit = 15; user_id = message.from_user.id
     await status_message.edit_text("🔎 Erome album detected, checking content...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     meta_opts = {'extract_flat': True, 'quiet': True, 'playlistend': album_limit}
-    with YoutubeDL(meta_opts) as ydl: info = ydl.extract_info(url, download=False)
+    try:
+        with YoutubeDL(meta_opts) as ydl: info = ydl.extract_info(url, download=False)
+    except Exception as e: await status_message.edit_text(f"❌ Could not extract Erome album info.\nError: `{str(e)}`"); return
     original_entries, content_to_process, seen_filenames = info.get('entries', []), [], set()
+    if not original_entries: await status_message.edit_text("❌ No content found in this Erome album."); return
     for entry in original_entries:
         filename = entry.get('url', '').split('/')[-1]
         if filename and filename not in seen_filenames: content_to_process.append(entry); seen_filenames.add(filename)
-    if not content_to_process: await status_message.edit_text("❌ No content found in this Erome album."); return
     content_count = len(content_to_process)
     await status_message.edit_text(f"✅ Found **{content_count}** unique items (limit {album_limit}). Processing...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     for i, entry in enumerate(content_to_process, 1):
         if user_id in CANCELLATION_REQUESTS: await status_message.edit_text("✅ **Album processing cancelled.**"); break
         entry_url = entry['url']
         if any(ext in entry_url for ext in ['.jpg', '.jpeg', '.png', '.gif']):
-            await message.reply_photo(photo=entry_url, caption=f"Photo {i}/{content_count}")
+            try: await message.reply_photo(photo=entry_url, caption=f"Photo {i}/{content_count}"); await asyncio.sleep(1)
+            except Exception as e: await message.reply_text(f"⚠️ Could not send photo {i}: {e}")
         else:
             await status_message.edit_text(f"Downloading video **{i}/{content_count}**...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
             await process_video_url(entry_url, {}, message, status_message, is_album_item=True)
     if user_id not in CANCELLATION_REQUESTS: await status_message.edit_text(f"✅ Finished processing all {content_count} items!", reply_markup=None); await asyncio.sleep(5)
-    await status_message.delete()
+    try: await status_message.delete()
+    except: pass
 
 async def process_video_url(url, ydl_opts_override, original_message, status_message, is_album_item=False):
     video_path, thumbnail_path = None, None; user_id = original_message.from_user.id
