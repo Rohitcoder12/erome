@@ -67,7 +67,7 @@ try:
 except Exception as e: print(f"Error connecting to MongoDB: {e}"); exit()
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- Helper Functions (unchanged) ---
+# --- Helper Functions ---
 def create_progress_bar(percentage):
     bar_length=10; filled_length=int(bar_length*percentage//100)
     return '🟢'*filled_length+'⚪'*(bar_length-filled_length)
@@ -190,7 +190,7 @@ async def cancel_handler(client, callback_query):
     if callback_query.from_user.id != user_id: await callback_query.answer("This is not for you!", show_alert=True); return
     CANCELLATION_REQUESTS.add(user_id); await callback_query.answer("Cancellation request sent.", show_alert=False); await callback_query.message.edit_text("🤚 **Cancellation requested...** Please wait.")
 
-# --- NEW: Main Handler for non-command messages ---
+# --- Main Handler for non-command messages ---
 @app.on_message(filters.private & ~filters.command())
 async def main_message_handler(client, message):
     user_id = message.from_user.id
@@ -304,4 +304,4 @@ if __name__ == "__main__":
     load_sites_from_db()
     print("Starting web server thread...")
     threading.Thread(target=run_server, daemon=True).start()
-    print("
+    print("Starting Pyrogram
