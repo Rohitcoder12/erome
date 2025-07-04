@@ -10,6 +10,7 @@ from itertools import zip_longest
 from yt_dlp import YoutubeDL
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+# NEW: Import more error types for robust broadcasting
 from pyrogram.errors import UserNotParticipant, UserIsBlocked, InputUserDeactivated
 from pyrogram.enums import ChatMemberStatus
 
@@ -51,6 +52,7 @@ DEFAULT_SITES = [
 DOWNLOAD_IN_PROGRESS = False
 CANCELLATION_REQUESTS = set()
 SITES_LIST = []
+# NEW: State for broadcasting
 BROADCAST_IN_PROGRESS = {}
 
 server = Flask(__name__)
@@ -64,7 +66,8 @@ try:
     downloads_collection = db.get_collection("downloads_history")
     sites_collection = db.get_collection("supported_sites")
     print("Successfully connected to MongoDB.")
-except Exception as e: print(f"Error connecting to MongoDB: {e}"); exit()
+except Exception as e:
+    print(f"Error connecting to MongoDB: {e}"); exit()
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # --- Helper Functions ---
@@ -81,6 +84,8 @@ def get_sites_list_text():
         reply_text += f"{row[0]:<25}{row[1]:<25}{row[2]:<25}\n"
     reply_text += "```"
     return reply_text
+
+# ... progress hooks are unchanged ...
 def progress_hook(d, m, user_id):
     if user_id in CANCELLATION_REQUESTS: raise Exception("Download cancelled by user.")
     if d['status']=='downloading' and (total_bytes := d.get('total_bytes') or d.get('total_bytes_estimate')):
@@ -95,7 +100,7 @@ async def upload_progress_callback(c, t, m, user_id):
         try:await m.edit_text(f"⏫ **Uploading...**\n{create_progress_bar(p)} {p:.2f}% [{c/(1024*1024):.1f}MB / {t/(1024*1024):.1f}MB]", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]));globals()['last_upload_update_time']=time.time()
         except:pass
 
-# --- Bot Commands (Now separate and will work correctly) ---
+# --- Bot Commands ---
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     user_id = message.from_user.id
@@ -120,12 +125,20 @@ async def start_command(client, message):
 async def sites_command(client, message):
     await message.reply_text(get_sites_list_text())
 
+# NEW: Help command
 @app.on_message(filters.command("help") & filters.private)
 async def help_command(client, message):
-    help_text = ("**How to use RX Downloader Bot:**\n\n" + "1. **Send a Link:** Simply paste a video link from a supported site and send it to me.\n\n" + "2. **Check Supported Sites:** Use /sites to see a full list of websites I can download from.\n\n" + "3. **Cancel a Download:** If a download is taking too long, just click the 'Cancel' button.\n\n" + "If a link fails, you will see a 'Report Link' button. Please use it to help me improve!")
+    help_text = (
+        "**How to use RX Downloader Bot:**\n\n"
+        "1. **Send a Link:** Simply paste a video link from a supported site and send it to me. I will process it and send you the video.\n\n"
+        "2. **Check Supported Sites:** Use the /sites command to see a full list of websites I can download from.\n\n"
+        "3. **Cancel a Download:** If a download is taking too long or you sent the wrong link, just click the 'Cancel' button.\n\n"
+        "If a link fails, you will see a 'Report Link' button. Please use it to help me improve!\n\n"
+        "Enjoy the bot!"
+    )
     await message.reply_text(help_text)
 
-# --- Admin Commands (Now separate and will work correctly) ---
+# --- Admin Commands ---
 @app.on_message(filters.command("stats") & filters.user(OWNER_ID))
 async def stats_command(client, message):
     total_users = users_collection.count_documents({})
@@ -137,7 +150,8 @@ async def add_site_command(client, message):
         domain = message.text.split(" ", 1)[1].strip().lower()
         if not domain: await message.reply_text("Usage: `/addsite example.com`"); return
         if sites_collection.find_one({"domain": domain}): await message.reply_text(f"`{domain}` is already in the list."); return
-        sites_collection.insert_one({"domain": domain}); SITES_LIST.append(domain)
+        sites_collection.insert_one({"domain": domain})
+        SITES_LIST.append(domain)
         await message.reply_text(f"✅ Successfully added `{domain}`.")
     except IndexError: await message.reply_text("Usage: `/addsite example.com`")
     except Exception as e: await message.reply_text(f"An error occurred: {e}")
@@ -158,98 +172,121 @@ async def del_site_command(client, message):
 @app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
 async def broadcast_command(client, message):
     if message.from_user.id in BROADCAST_IN_PROGRESS:
-        await message.reply_text("A broadcast is already in progress. Use /cancelbroadcast to stop it."); return
+        await message.reply_text("A broadcast is already in progress. Send /cancelbroadcast to stop it.")
+        return
     BROADCAST_IN_PROGRESS[message.from_user.id] = True
-    await message.reply_text("Broadcast mode started. Send the message to broadcast. To exit, use /cancelbroadcast.")
+    await message.reply_text("You have started broadcast mode. Send me the message (text, photo, video, album, etc.) you want to send to all users. To exit, send /cancelbroadcast.")
 
 @app.on_message(filters.command("cancelbroadcast") & filters.user(OWNER_ID))
 async def cancel_broadcast_command(client, message):
     if message.from_user.id in BROADCAST_IN_PROGRESS:
         del BROADCAST_IN_PROGRESS[message.from_user.id]
-        await message.reply_text("Broadcast mode cancelled.")
-    else: await message.reply_text("You are not in broadcast mode.")
+        await message.reply_text("Broadcast mode has been cancelled.")
+    else:
+        await message.reply_text("You are not currently in broadcast mode.")
 
-# --- Callback Handlers (unchanged) ---
+# --- Callback Handlers ---
 @app.on_callback_query(filters.regex("^show_sites_list$"))
 async def show_sites_handler(client, callback_query):
-    await callback_query.answer(); await callback_query.message.reply_text(get_sites_list_text())
+    await callback_query.answer()
+    await callback_query.message.reply_text(get_sites_list_text())
 @app.on_callback_query(filters.regex("^report_"))
 async def report_link_handler(client, callback_query):
     try:
         encoded_url = callback_query.data.split("_", 1)[1]
         decoded_url = base64.urlsafe_b64decode(encoded_url).decode('utf-8')
         user = callback_query.from_user
-        report_text = (f"🚨 **Link Report**\n\n**User:** {user.mention} (`{user.id}`)\n**URL:** `{decoded_url}`")
+        report_text = (f"🚨 **Link Report**\n\n**User:** {user.mention} (`{user.id}`)\n**Reported URL:** `{decoded_url}`")
         await client.send_message(chat_id=REPORT_CHANNEL_ID, text=report_text)
         await callback_query.answer("✅ Thank you! The link has been reported.", show_alert=True)
         await callback_query.edit_message_reply_markup(reply_markup=None)
-    except Exception as e: print(f"Error handling report: {e}"); await callback_query.answer("Could not send report.", show_alert=True)
+    except Exception as e:
+        print(f"Error handling report: {e}"); await callback_query.answer("Could not send report.", show_alert=True)
 @app.on_callback_query(filters.regex("^cancel_"))
 async def cancel_handler(client, callback_query):
     user_id = int(callback_query.data.split("_")[1])
     if callback_query.from_user.id != user_id: await callback_query.answer("This is not for you!", show_alert=True); return
     CANCELLATION_REQUESTS.add(user_id); await callback_query.answer("Cancellation request sent.", show_alert=False); await callback_query.message.edit_text("🤚 **Cancellation requested...** Please wait.")
 
-# --- Main Handler for non-command messages ---
-@app.on_message(filters.private & ~filters.command())
+# --- Message Handlers (Link and Broadcast) ---
+@app.on_message(filters.private)
 async def main_message_handler(client, message):
+    # This handler acts as a router
     user_id = message.from_user.id
-    
-    # Check if the owner is sending a broadcast message
+
+    # 1. Check for Broadcast Mode
     if user_id in BROADCAST_IN_PROGRESS:
         del BROADCAST_IN_PROGRESS[user_id]
-        all_users_cursor = users_collection.find({}, {'_id': 1})
-        all_user_ids = [user['_id'] for user in all_users_cursor]
-        total_users, success_count, failed_count = len(all_user_ids), 0, 0
+        all_users = [user['_id'] for user in users_collection.find({}, {'_id': 1})]
+        total_users = len(all_users)
+        success_count, failed_count = 0, 0
         
-        status_msg = await message.reply_text(f"Broadcasting to {total_users} users...")
-        for i, user_id in enumerate(all_user_ids):
+        status_msg = await message.reply_text(f"Broadcasting started to {total_users} users...")
+        
+        for i, user_id in enumerate(all_users):
             try:
-                await message.copy(chat_id=user_id) # Use .copy() to forward any message type
+                await message.forward(chat_id=user_id)
                 success_count += 1
-            except (UserIsBlocked, InputUserDeactivated): failed_count += 1
-            except Exception as e: failed_count += 1; print(f"Broadcast error to user {user_id}: {e}")
+            except (UserIsBlocked, InputUserDeactivated):
+                failed_count += 1
+            except Exception as e:
+                failed_count += 1
+                print(f"Broadcast error to user {user_id}: {e}")
+            
             if (i + 1) % 20 == 0 or (i + 1) == total_users:
-                await status_msg.edit_text(f"**Broadcast Progress**\n\nSent: {success_count}/{total_users}\nFailed: {failed_count}"); await asyncio.sleep(1)
-        await status_msg.edit_text(f"✅ **Broadcast Complete**\nSent to: {success_count}\nFailed for: {failed_count}"); return
+                await status_msg.edit_text(
+                    f"**Broadcast Progress**\n\n"
+                    f"Sent: {success_count}/{total_users}\n"
+                    f"Failed: {failed_count}"
+                )
+                await asyncio.sleep(1) # Sleep to avoid hitting flood limits
+        
+        await status_msg.edit_text(f"✅ **Broadcast Complete**\n\nSent to: {success_count} users\nFailed for: {failed_count} users")
+        return # Stop further processing
 
-    # If not a broadcast, assume it's a link and process it
-    await link_processor(client, message)
+    # 2. Check for Link
+    if message.text and message.text.startswith(('http://', 'https://')):
+        await link_handler(client, message)
+    else:
+        # Optional: Reply to non-link, non-command messages
+        await message.reply_text("Please send me a valid video link, or use /help to see what I can do.")
 
-async def link_processor(client, message):
-    # This function now contains all the link processing logic
+async def link_handler(client: Client, message: Message):
     user_id = message.from_user.id
     try:
         member = await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
         if member.status in [ChatMemberStatus.BANNED, ChatMemberStatus.RESTRICTED]: await message.reply_text("You are banned from using this bot."); return
     except UserNotParticipant:
         join_button = InlineKeyboardMarkup([[InlineKeyboardButton("Join Our Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])
-        await message.reply_text("To use this bot, you must join our channel. After joining, send the link again.", reply_markup=join_button); return
-    except Exception as e: print(f"Error during force sub check: {e}"); await message.reply_text("An error occurred checking membership."); return
+        await message.reply_text("To use this bot, you must join our channel. After joining, please send the link again.", reply_markup=join_button); return
+    except Exception as e: print(f"Error during force sub check: {e}"); await message.reply_text("An error occurred while checking your membership status."); return
     global DOWNLOAD_IN_PROGRESS
     if DOWNLOAD_IN_PROGRESS: await message.reply_text("🤚 **Bot is busy!** Please try again in a few minutes."); return
-    
-    url = message.text.strip() if message.text else ""
-    if not url.startswith(('http://', 'https://')):
-        await message.reply_text("Please send a valid link or use /help."); return
-
-    if not any(site in url for site in SITES_LIST):
-        await message.reply_text("❌ **Sorry, this website is not supported.**\n\nUse /sites to see the full list."); return
-        
+    url = message.text.strip()
+    if not any(site in url for site in SITES_LIST): await message.reply_text("❌ **Sorry, this website is not supported.**\n\nUse /sites to see the full list."); return
     DOWNLOAD_IN_PROGRESS = True; CANCELLATION_REQUESTS.discard(user_id)
     status_message = await message.reply_text("✅ **URL received. Starting process...**", quote=True, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     try:
         await process_video_url(url, {}, message, status_message)
-    except Exception as e: print(f"--- UNHANDLED ERROR IN LINK_HANDLER ---\n{traceback.format_exc()}\n---"); await status_message.edit_text(f"❌ A critical error occurred: {e}")
+    except Exception as e: print(f"--- UNHANDLED ERROR IN LINK_HANDLER ---\n{traceback.format_exc()}\n--------------------"); await status_message.edit_text(f"❌ A critical error occurred: {e}")
     finally: CANCELLATION_REQUESTS.discard(user_id); DOWNLOAD_IN_PROGRESS = False
 
 async def process_video_url(url, ydl_opts_override, original_message, status_message, is_album_item=False):
-    # This function remains our core download logic
+    # This function now sets default ydl_opts and can be used for all downloads
     video_path, thumbnail_path = None, None; user_id = original_message.from_user.id
     download_log_id = ObjectId()
     if downloads_collection is not None: downloads_collection.insert_one({"_id": download_log_id, "user_id": user_id, "url": url, "status": "processing", "start_time": datetime.now(timezone.utc)})
-    ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(title)s.%(ext)s'),'noplaylist':True,'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,original_message.from_user.id)],'max_filesize':450*1024*1024,}
+    
+    ydl_opts = {
+        'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(title)s.%(ext)s'),
+        'noplaylist':True,
+        'quiet':True,
+        'progress_hooks':[lambda d:progress_hook(d,status_message,message.from_user.id)],
+        'max_filesize':450*1024*1024,
+    }
     ydl_opts.update(ydl_opts_override)
+
     try:
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False); video_title = info.get('title', 'Untitled Video')
@@ -291,17 +328,4 @@ async def process_video_url(url, ydl_opts_override, original_message, status_mes
 def load_sites_from_db():
     global SITES_LIST
     sites = sites_collection.find()
-    db_sites = [s['domain'] for s in sites]
-    if not db_sites:
-        print("No sites in DB. Populating with defaults...")
-        sites_to_insert = [{"domain": s} for s in DEFAULT_SITES]
-        sites_collection.insert_many(sites_to_insert)
-        SITES_LIST = DEFAULT_SITES
-    else: SITES_LIST = db_sites
-    print(f"Loaded {len(SITES_LIST)} supported sites.")
-if __name__ == "__main__":
-    if not os.path.exists(DOWNLOAD_LOCATION): os.makedirs(DOWNLOAD_LOCATION)
-    load_sites_from_db()
-    print("Starting web server thread...")
-    threading.Thread(target=run_server, daemon=True).start()
-    print("Starting Pyrogram
+    db_
