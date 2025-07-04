@@ -27,26 +27,26 @@ DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
 DOWNLOAD_LOCATION = "./downloads/"
 
 # --- Start Message Configuration (EDIT THESE) ---
-START_PHOTO_URL = "https://i.ibb.co/tZJc5Fh/RX-Downloader-BOT-logo.png"
-MAINTAINED_BY_URL = "https://t.me/your_username" # CHANGE THIS to your Telegram profile link
+START_PHOTO_URL = "https://telegra.ph/Wow-07-03-5"
+MAINTAINED_BY_URL = "https://t.me/Rexonblood" # CHANGE THIS to your Telegram profile link
 
 # --- Expanded List of Supported Sites ---
 SUPPORTED_SITES = [
     # A-F
-    "adultswim.com", "anysex.com", "beeg.com", "bravotube.net", "camwhores.tv", "camsoda.com", "chaturbate.com",
+    "rock.porn", "hdsex.org", "beeg.com", "bravotube.net", "camwhores.tv", "camsoda.com", "chaturbate.com",
     "desitube.com", "drporn.com", "dtube.video", "e-hentai.org", "empflix.com", "eporner.com", "erome.com",
     "erome.io", "exhentai.org", "extremetube.com", "fapbox.com",
     # G-P
     "gaytube.com", "hclips.com", "hentai-foundry.com", "hentaivideos.net", "hentaistream.xxx", "hottystop.com",
-    "iqtube.com", "ivxxx.com", "keezmovies.com", "livejasmin.com", "manyvids.com", "metacafe.com", "mofosex.com",
+    "iqtube.com", "ivxxx.com", "keezmovies.com", "livejasmin.com", "manyvids.com", "metacafe.com", "mofosex.net",
     "motherless.com", "mrdeepfakes.com", "myvidster.com", "noodlemagazine.com", "nuvid.com", "onlyfans.com",
     "perfectgirls.net", "pornhd.com", "pornhub.org", "pornhub.com", "pornteengirl.com", "porntube.com", "pornz.com",
     # R-T
-    "redtube.com", "spankbang.com", "sunporno.com", "tnaflix.com", "tube8.com", "tubepleasure.com", "txxx.com", "txnhh.com",
+    "redtube.net", "spankbang.com", "sunporno.com", "tnaflix.com", "tube8.es", "tubepleasure.com", "txxx.com", "txnhh.com",
     # U-Z & X-sites
-    "vidmax.com", "vxxx.com", "worldstarhiphop.com", "xanimu.com", "xcafe.com", "xhamster.com", "xhamster.desi",
+    "vidmax.com", "vxxx.com", "pornoxo.com", "xanimu.com", "nuvid.com", "xhamster.com", "xhamster.desi",
     "xhamster43.desi", "xnxx.com", "xvideos.com", "xtube.com", "xvideos.es", "xvideos.fr", "xv1deos.com",
-    "xxxy.pro", "youjizz.com", "youporn.com", "ytporn.com", "youtube.com", "instagram.com", "tiktok.com"
+    "xhamster19.com", "youjizz.com", "youporn.com", "ytporn.com", "youtube.com", "instagram.com", "tiktok.com"
 ]
 
 # --- Force Subscription Configuration ---
