@@ -10,7 +10,7 @@ from itertools import zip_longest
 from yt_dlp import YoutubeDL
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.errors import UserNotParticipant, UserIsBlocked, InputUserDeactivated
+from pyrogram.errors import UserNotParticipant
 from pyrogram.enums import ChatMemberStatus
 
 from flask import Flask
@@ -88,7 +88,6 @@ async def upload_progress_callback(c, t, m, user_id):
         try:await m.edit_text(f"⏫ Uploading... {p:.1f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]));globals()['last_upload_update_time']=time.time()
         except:pass
 
-# --- Command Handlers ---
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     try:
@@ -104,7 +103,6 @@ async def start_command(client, message):
 @app.on_message(filters.command("sites") & filters.private)
 async def sites_command(client, message): await message.reply_text(get_sites_list_text())
 
-# --- Admin Commands ---
 @app.on_message(filters.command("addsite") & filters.user(OWNER_ID))
 async def add_site_command(client, message):
     try:
@@ -123,7 +121,6 @@ async def del_site_command(client, message):
         else: await message.reply_text(f"`{domain}` was not found.")
     except Exception: await message.reply_text("Usage: `/delsite example.com`")
 
-# --- Callback Handlers ---
 @app.on_callback_query(filters.regex("^show_sites_list$"))
 async def show_sites_handler(client, c_q): await c_q.answer(); await c_q.message.reply_text(get_sites_list_text())
 @app.on_callback_query(filters.regex("^report_"))
@@ -140,7 +137,7 @@ async def cancel_handler(client, c_q):
     if c_q.from_user.id != user_id: await c_q.answer("This is not for you!", show_alert=True); return
     CANCELLATION_REQUESTS.add(user_id); await c_q.answer("Cancellation request sent.", show_alert=False); await c_q.message.edit_text("🤚 **Cancellation requested...**")
 
-# --- Main Message Handler for Links ---
+# --- CORRECTED: Main Message Handler for Links ---
 @app.on_message(filters.private & filters.text & ~filters.command())
 async def link_processor(client, message):
     user_id = message.from_user.id
