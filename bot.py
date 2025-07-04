@@ -32,7 +32,6 @@ START_PHOTO_URL = "https://telegra.ph/Wow-07-03-5"
 MAINTAINED_BY_URL = "https://t.me/Rexonblood"
 FORCE_SUB_CHANNEL = "@dailynewswalla"
 
-# --- Default Supported Sites ---
 DEFAULT_SITES = [
     "rock.porn", "hdsex.org", "beeg.com", "bravotube.net", "camwhores.tv", "camsoda.com", "chaturbate.com",
     "desitube.com", "drporn.com", "dtube.video", "e-hentai.org", "empflix.com", "eporner.com", "erome.com",
@@ -137,8 +136,8 @@ async def cancel_handler(client, c_q):
     if c_q.from_user.id != user_id: await c_q.answer("This is not for you!", show_alert=True); return
     CANCELLATION_REQUESTS.add(user_id); await c_q.answer("Cancellation request sent.", show_alert=False); await c_q.message.edit_text("🤚 **Cancellation requested...**")
 
-# --- CORRECTED: Main Message Handler for Links ---
-@app.on_message(filters.private & filters.text & ~filters.command())
+# --- CORRECTED FINAL HANDLER for all other private messages ---
+@app.on_message(filters.private & ~filters.command())
 async def link_processor(client, message):
     user_id = message.from_user.id
     try:
@@ -148,9 +147,13 @@ async def link_processor(client, message):
     except Exception as e: print(f"Force sub error: {e}"); await message.reply_text("Error checking membership."); return
     global DOWNLOAD_IN_PROGRESS
     if DOWNLOAD_IN_PROGRESS: await message.reply_text("🤚 **Bot is busy!**"); return
-    url = message.text.strip()
-    if not url.startswith(('http://', 'https://')): await message.reply_text("Please send a valid link or use /start to see instructions."); return
-    if not any(site in url for site in SITES_LIST): await message.reply_text("❌ **Sorry, this site is not supported.**\nUse /sites to check."); return
+    
+    url = message.text.strip() if message.text else ""
+    if not url.startswith(('http://', 'https://')):
+        await message.reply_text("Please send a valid link or use /start to see instructions."); return
+    if not any(site in url for site in SITES_LIST):
+        await message.reply_text("❌ **Sorry, this site is not supported.**\nUse /sites to check."); return
+        
     DOWNLOAD_IN_PROGRESS = True; CANCELLATION_REQUESTS.discard(user_id)
     status_msg = await message.reply_text("✅ **URL received, starting...**", quote=True, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     try:
@@ -158,8 +161,11 @@ async def link_processor(client, message):
             await handle_erome_album(url, message, status_msg)
         else:
             await process_video_url(url, {}, message, status_msg)
-    except Exception as e: print(f"--- LINK HANDLER ERROR ---\n{traceback.format_exc()}\n---"); await status_msg.edit_text(f"❌ Critical error: {e}")
-    finally: CANCELLATION_REQUESTS.discard(user_id); DOWNLOAD_IN_PROGRESS = False
+    except Exception as e:
+        print(f"--- LINK HANDLER ERROR ---\n{traceback.format_exc()}\n---")
+        await status_msg.edit_text(f"❌ Critical error: {e}")
+    finally:
+        CANCELLATION_REQUESTS.discard(user_id); DOWNLOAD_IN_PROGRESS = False
 
 async def handle_erome_album(url, message, status_message):
     album_limit = 15; user_id = message.from_user.id
