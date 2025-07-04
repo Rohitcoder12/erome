@@ -32,7 +32,6 @@ START_PHOTO_URL = "https://telegra.ph/Wow-07-03-5"
 MAINTAINED_BY_URL = "https://t.me/Rexonblood"
 FORCE_SUB_CHANNEL = "@dailynewswalla"
 
-# --- Default Supported Sites ---
 DEFAULT_SITES = [
     "rock.porn", "hdsex.org", "beeg.com", "bravotube.net", "camwhores.tv", "camsoda.com", "chaturbate.com",
     "desitube.com", "drporn.com", "dtube.video", "e-hentai.org", "empflix.com", "eporner.com", "erome.com",
@@ -102,6 +101,7 @@ async def start_command(client, message):
 
 @app.on_message(filters.command("sites") & filters.private)
 async def sites_command(client, message): await message.reply_text(get_sites_list_text())
+
 @app.on_message(filters.command("help") & filters.private)
 async def help_command(client, message):
     help_text = ("**How to use RX Downloader Bot:**\n\n" + "1. **Send a Link:** Simply paste a video link.\n" + "2. **Check Supported Sites:** Use /sites to see the full list.\n" + "3. **Cancel a Download:** Click the 'Cancel' button.\n" + "If a link fails, use the 'Report Link' button to help me improve!")
@@ -111,6 +111,7 @@ async def help_command(client, message):
 async def stats_command(client, message):
     total_users = users_collection.count_documents({}) if users_collection else 0
     await message.reply_text(f"📊 **Bot Stats**\n\nTotal Users: `{total_users}`")
+
 @app.on_message(filters.command("addsite") & filters.user(OWNER_ID))
 async def add_site_command(client, message):
     try:
@@ -119,6 +120,7 @@ async def add_site_command(client, message):
         sites_collection.insert_one({"domain": domain}); SITES_LIST.append(domain)
         await message.reply_text(f"✅ Added `{domain}`.")
     except Exception: await message.reply_text("Usage: `/addsite example.com`")
+
 @app.on_message(filters.command("delsite") & filters.user(OWNER_ID))
 async def del_site_command(client, message):
     try:
@@ -128,11 +130,13 @@ async def del_site_command(client, message):
             await message.reply_text(f"✅ Removed `{domain}`.")
         else: await message.reply_text(f"`{domain}` was not found.")
     except Exception: await message.reply_text("Usage: `/delsite example.com`")
+
 @app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
 async def broadcast_command(client, message):
     if message.from_user.id in BROADCAST_IN_PROGRESS: await message.reply_text("Broadcast already in progress. /cancelbroadcast to stop."); return
     BROADCAST_IN_PROGRESS[message.from_user.id] = True
     await message.reply_text("Broadcast mode started. Send the message to broadcast, or /cancelbroadcast.")
+
 @app.on_message(filters.command("cancelbroadcast") & filters.user(OWNER_ID))
 async def cancel_broadcast_command(client, message):
     if message.from_user.id in BROADCAST_IN_PROGRESS:
@@ -156,8 +160,8 @@ async def cancel_handler(client, c_q):
     if c_q.from_user.id != user_id: await c_q.answer("This is not for you!", show_alert=True); return
     CANCELLATION_REQUESTS.add(user_id); await c_q.answer("Cancellation request sent.", show_alert=False); await c_q.message.edit_text("🤚 **Cancellation requested...**")
 
-# --- THIS IS THE CORRECTED FILTER FOR NON-COMMAND MESSAGES ---
-@app.on_message(filters.private & filters.text & ~filters.command)
+# --- THIS IS THE CORRECTED HANDLER FOR ALL OTHER MESSAGES ---
+@app.on_message(filters.private & ~filters.command(None))
 async def main_message_handler(client, message):
     user_id = message.from_user.id
     if user_id in BROADCAST_IN_PROGRESS:
@@ -167,14 +171,12 @@ async def main_message_handler(client, message):
         status_msg = await message.reply_text(f"Broadcasting to {total} users...")
         for i, user_id_to_send in enumerate(all_users):
             try:
-                await message.copy(chat_id=user_id_to_send)
-                success += 1
+                await message.copy(chat_id=user_id_to_send); success += 1
             except (UserIsBlocked, InputUserDeactivated): failed += 1
             except Exception as e: failed += 1; print(f"Broadcast error to {user_id_to_send}: {e}")
             if (i + 1) % 20 == 0 or (i + 1) == total:
                 await status_msg.edit_text(f"**Broadcast Progress**\n\nSent: {success}/{total}\nFailed: {failed}"); await asyncio.sleep(1)
         await status_msg.edit_text(f"✅ **Broadcast Complete**\nSent: {success}\nFailed: {failed}"); return
-
     await link_processor(client, message)
 
 async def link_processor(client, message):
@@ -200,7 +202,7 @@ async def link_processor(client, message):
     finally: CANCELLATION_REQUESTS.discard(user_id); DOWNLOAD_IN_PROGRESS = False
 
 async def handle_erome_album(url, message, status_message):
-    album_limit = 15; user_id = message.from_user.id;
+    album_limit = 15; user_id = message.from_user.id
     await status_message.edit_text("🔎 Erome album detected, checking content...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     meta_opts = {'extract_flat': True, 'quiet': True, 'playlistend': album_limit}
     with YoutubeDL(meta_opts) as ydl: info = ydl.extract_info(url, download=False)
