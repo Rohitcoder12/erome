@@ -46,7 +46,7 @@ SUPPORTED_SITES = [
     # U-Z & X-sites
     "vidmax.com", "vxxx.com", "worldstarhiphop.com", "xanimu.com", "xcafe.com", "xhamster.com", "xhamster.desi",
     "xhamster43.desi", "xnxx.com", "xvideos.com", "xtube.com", "xvideos.es", "xvideos.fr", "xv1deos.com",
-    "xxxy.pro", "youjizz.com", "you-porn.com", "ytporn.com", "youtube.com", "instagram.com", "tiktok.com"
+    "xxxy.pro", "youjizz.com", "you-porn.com", "ytporn.com", "youtube.com", "instagram.com", "tiktok.com", "flw.wtf"
 ]
 
 # --- Force Subscription Configuration ---
