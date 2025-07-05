@@ -1,4 +1,4 @@
-# Bot.py (Corrected for IndentationError and Render Web Service)
+# Bot.py (Final version with Admin Panel and /help command)
 
 import os
 import time
@@ -148,6 +148,32 @@ async def sites_command(client, message):
 # --- Admin Panel Section ---
 admin_filter = filters.user(ADMIN_ID) & filters.private
 
+@app.on_message(filters.command("help") & filters.private)
+async def help_command(client, message):
+    user_help_text = """
+**Here's how to use me:**
+
+/start - Start the bot.
+/sites - See all supported websites.
+/help - Show this help message.
+
+➡️ Just send me a link to a video from a supported site and I'll download it for you!
+    """
+
+    admin_help_text = """
+--- **Admin Commands** ---
+/stats - Get bot usage statistics.
+/users - See the 10 most recent users.
+/broadcast <msg> - Send a message to all users.
+/addsite <domain> - Add a new supported site.
+/delsite <domain> - Remove a supported site.
+    """
+
+    if message.from_user.id == ADMIN_ID:
+        await message.reply_text(user_help_text + admin_help_text)
+    else:
+        await message.reply_text(user_help_text)
+
 @app.on_message(filters.command("stats") & admin_filter)
 async def stats_command(client, message):
     if users_collection is None or downloads_collection is None: await message.reply_text("❌ Database not connected. Cannot fetch stats."); return
@@ -291,7 +317,6 @@ async def handle_erome_album(url, message, status_message):
     content_count = len(content_to_process)
     await status_message.edit_text(f"✅ Album found with **{content_count}** unique items (limit {album_limit}). Processing...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     await asyncio.sleep(2)
-    # --- THIS BLOCK IS NOW CORRECTLY INDENTED ---
     for i, entry in enumerate(content_to_process, 1):
         if user_id in CANCELLATION_REQUESTS:
             await status_message.edit_text("✅ **Album processing cancelled.**"); break
@@ -302,9 +327,9 @@ async def handle_erome_album(url, message, status_message):
             ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,f"album_item_{i}_%(title)s.%(ext)s"),'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,user_id)],'max_filesize':450*1024*1024}
             await status_message.edit_text(f"Downloading video **{i}/{content_count}**...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
             await process_video_url(entry_url, ydl_opts, message, status_message, is_album_item=True)
-    # --- END OF CORRECTED BLOCK ---
     if not user_id in CANCELLATION_REQUESTS: await status_message.edit_text(f"✅ Finished processing all {content_count} items!", reply_markup=None); await asyncio.sleep(5)
-    await status_message.delete()
+    try: await status_message.delete()
+    except: pass
 
 async def handle_photo_download(entry, prefix, message):
     photo_url, photo_title = entry.get('url'), prefix + entry.get('title', 'Untitled Photo')
