@@ -1,4 +1,4 @@
-# Bot.py (with improved Erome album handling)
+# Bot.py (Final version with all features and Erome fix)
 
 import os
 import time
@@ -276,7 +276,6 @@ async def handle_single_video(url, message, status_message):
     ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(title)s.%(ext)s'),'noplaylist':True,'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,message.from_user.id)],'max_filesize':450*1024*1024}
     await process_video_url(url, ydl_opts, message, status_message)
 
-# --- NEW: Improved Erome album handler ---
 async def handle_erome_album(url, message, status_message):
     album_limit = 10
     user_id = message.from_user.id
@@ -325,27 +324,21 @@ async def handle_photo_download(entry, prefix, message):
     photo_url, photo_title = entry.get('url'), prefix + entry.get('title', 'Untitled Photo')
     await message.reply_photo(photo=photo_url, caption=photo_title); await asyncio.sleep(1)
 
-# --- MODIFIED: process_video_url signature updated ---
 async def process_video_url(url_or_info, ydl_opts, original_message, status_message, is_album_item=False):
     video_path, thumbnail_path = None, None; user_id = original_message.from_user.id
     download_log_id = ObjectId()
-    
-    # Check if we were passed a URL string or a pre-extracted info dictionary
     is_info_dict = isinstance(url_or_info, dict)
     url = url_or_info.get('webpage_url') if is_info_dict else url_or_info
-    
     if downloads_collection is not None: downloads_collection.insert_one({"_id": download_log_id, "user_id": user_id, "url": url, "status": "processing", "start_time": datetime.now(timezone.utc)})
     try:
         with YoutubeDL(ydl_opts) as ydl:
-            # If we already have the info, don't re-extract it.
             info = url_or_info if is_info_dict else ydl.extract_info(url, download=False)
             video_title = info.get('title', 'Untitled Video')
             if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"video_title": video_title}})
-            
             print(f"[{user_id}] Starting download for: {video_title}")
-            # Pass the full info dict for efficiency if we have it
-            ydl.download([info if is_info_dict else url])
-            
+            # --- THE FIX IS HERE ---
+            ydl.download([url])
+            # --- END OF FIX ---
             list_of_files = [os.path.join(DOWNLOAD_LOCATION, f) for f in os.listdir(DOWNLOAD_LOCATION)]
             if not list_of_files: raise FileNotFoundError("Download folder is empty.")
             video_path = max(list_of_files, key=os.path.getctime)
