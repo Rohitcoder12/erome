@@ -1,6 +1,6 @@
 pyrogram
 tgcrypto
-yt-dlp==2024.07.25 # MODIFIED - Updated to the latest version
+yt-dlp==2025.06.30
 requests
 Flask
 pymongo[srv]
