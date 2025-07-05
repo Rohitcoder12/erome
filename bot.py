@@ -27,9 +27,9 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
 DOWNLOAD_LOCATION = "./downloads/"
-REPORT_CHANNEL_ID = int(os.environ.get("REPORT_CHANNEL_ID", 0)) # --- NEW --- Report Channel ID
+REPORT_CHANNEL_ID = int(os.environ.get("REPORT_CHANNEL_ID", 0))
 
-# --- MODIFIED: More robust handling for ADMIN_ID ---
+# --- Robust handling for ADMIN_ID ---
 admin_id_str = os.environ.get("ADMIN_ID")
 if not admin_id_str:
     print("FATAL ERROR: The ADMIN_ID environment variable is not set. Please add it to your configuration and restart the bot.")
@@ -44,7 +44,7 @@ except ValueError:
 START_PHOTO_URL = "https://telegra.ph/Wow-07-03-5"
 MAINTAINED_BY_URL = "https://t.me/Rexonblood"
 
-# --- MODIFIED: This is now the INITIAL list for the database ---
+# --- INITIAL list for the database ---
 INITIAL_SUPPORTED_SITES = [
     "rock.porn", "hdsex.org", "beeg.com", "bravotube.net", "camwhores.tv", "camsoda.com", "chaturbate.com",
     "desitube.com", "drporn.com", "dtube.video", "e-hentai.org", "empflix.com", "eporner.com", "erome.com",
@@ -80,20 +80,15 @@ try:
     config_collection = db.get_collection("config")
     print("Successfully connected to MongoDB.")
 except Exception as e:
-    print(f"Error connecting to MongoDB: {e}")
-    users_collection=None; downloads_collection=None; config_collection=None
+    print(f"Error connecting to MongoDB: {e}"); users_collection=None; downloads_collection=None; config_collection=None
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- ALL HELPER FUNCTIONS AND COMMANDS UP TO `process_video_url` REMAIN THE SAME ---
-# (I've collapsed them here for brevity, but they are unchanged in the full code block below)
-
-# --- [YOUR EXISTING CODE FROM LINE 100 to process_video_url] ---
+# --- Helper Functions ---
 def initialize_supported_sites():
     global SUPPORTED_SITES_CACHE
     if config_collection is None:
         print("MongoDB not connected. Falling back to initial site list.")
-        SUPPORTED_SITES_CACHE = set(INITIAL_SUPPORTED_SITES)
-        return
+        SUPPORTED_SITES_CACHE = set(INITIAL_SUPPORTED_SITES); return
     sites_doc = config_collection.find_one({"_id": "supported_sites"})
     if sites_doc:
         SUPPORTED_SITES_CACHE = set(sites_doc.get("sites", []))
@@ -103,9 +98,11 @@ def initialize_supported_sites():
         config_collection.insert_one({"_id": "supported_sites", "sites": INITIAL_SUPPORTED_SITES})
         SUPPORTED_SITES_CACHE = set(INITIAL_SUPPORTED_SITES)
         print(f"Saved {len(SUPPORTED_SITES_CACHE)} sites to DB.")
+
 def create_progress_bar(percentage):
     bar_length=10; filled_length=int(bar_length*percentage//100)
     return '🟢'*filled_length+'⚪'*(bar_length-filled_length)
+
 def get_sites_list_text():
     reply_text = "✅ **Here are the currently supported sites:**\n\n```\n"
     sorted_sites = sorted(list(SUPPORTED_SITES_CACHE))
@@ -117,6 +114,7 @@ def get_sites_list_text():
         reply_text += f"{row[0]:<25}{row[1]:<25}{row[2]:<25}\n"
     reply_text += "```"
     return reply_text
+
 def progress_hook(d, m, user_id):
     if user_id in CANCELLATION_REQUESTS: raise Exception("Download cancelled by user.")
     if d['status']=='downloading' and (total_bytes := d.get('total_bytes') or d.get('total_bytes_estimate')):
@@ -124,12 +122,15 @@ def progress_hook(d, m, user_id):
         if(time.time()-globals().get('last_update_time',0))>2:
             try:asyncio.create_task(m.edit_text(f"⏳ **Downloading...**\n{create_progress_bar(p)} {p:.2f}% [{db/(1024*1024):.1f}MB]", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]])));globals()['last_update_time']=time.time()
             except:pass
+
 async def upload_progress_callback(c, t, m, user_id):
     if user_id in CANCELLATION_REQUESTS: raise Exception("Upload cancelled by user.")
     p=c/t*100
     if(time.time()-globals().get('last_upload_update_time',0))>2:
         try:await m.edit_text(f"⏫ **Uploading...**\n{create_progress_bar(p)} {p:.2f}% [{c/(1024*1024):.1f}MB / {t/(1024*1024):.1f}MB]", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]));globals()['last_upload_update_time']=time.time()
         except:pass
+
+# --- Bot Commands ---
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     user_id = message.from_user.id
@@ -150,9 +151,11 @@ async def start_command(client, message):
         [InlineKeyboardButton("• SUPPORTED SITES", callback_data="show_sites_list"), InlineKeyboardButton("• MAINTAINED BY", url=MAINTAINED_BY_URL)]
     ])
     await message.reply_photo(photo=START_PHOTO_URL, caption=start_text, reply_markup=keyboard)
+
 @app.on_message(filters.command("sites") & filters.private)
 async def sites_command(client, message):
     sites_text = get_sites_list_text(); await message.reply_text(sites_text)
+
 admin_filter = filters.user(ADMIN_ID) & filters.private
 @app.on_message(filters.command("addsite") & admin_filter)
 async def add_site_command(client, message):
@@ -164,6 +167,7 @@ async def add_site_command(client, message):
     if result.matched_count == 0: await message.reply_text("❌ Critical error: Site list document not found in DB."); return
     if result.modified_count > 0: SUPPORTED_SITES_CACHE.add(site_to_add); await message.reply_text(f"✅ **Success!** `{site_to_add}` has been added.")
     else: await message.reply_text(f"ℹ️ `{site_to_add}` is already in the list.")
+
 @app.on_message(filters.command("delsite") & admin_filter)
 async def del_site_command(client, message):
     if config_collection is None: await message.reply_text("❌ Database not connected. Cannot modify site list."); return
@@ -174,50 +178,30 @@ async def del_site_command(client, message):
     if result.matched_count == 0: await message.reply_text("❌ Critical error: Site list document not found in DB."); return
     if result.modified_count > 0: SUPPORTED_SITES_CACHE.discard(site_to_remove); await message.reply_text(f"✅ **Success!** `{site_to_remove}` has been removed.")
     else: await message.reply_text(f"ℹ️ `{site_to_remove}` was not found in the list.")
+
 @app.on_callback_query(filters.regex("^show_sites_list$"))
 async def show_sites_handler(client, callback_query):
     sites_text = get_sites_list_text(); await callback_query.answer(); await callback_query.message.reply_text(sites_text)
+
 @app.on_callback_query(filters.regex("^cancel_"))
 async def cancel_handler(client, callback_query):
     user_id = int(callback_query.data.split("_")[1])
     if callback_query.from_user.id != user_id: await callback_query.answer("This is not for you!", show_alert=True); return
     CANCELLATION_REQUESTS.add(user_id); await callback_query.answer("Cancellation request sent.", show_alert=False); await callback_query.message.edit_text("🤚 **Cancellation requested...** Please wait.")
 
-# --- NEW: Callback handler for the report button ---
 @app.on_callback_query(filters.regex("^report_"))
 async def report_link_handler(client, callback_query):
-    # Data is in the format: "report_{chat_id}_{message_id}"
-    try:
-        _, from_chat_id_str, message_id_str = callback_query.data.split("_")
-        from_chat_id = int(from_chat_id_str)
-        message_id_to_forward = int(message_id_str)
-    except ValueError:
-        await callback_query.answer("Invalid report format.", show_alert=True); return
-
+    try: _, from_chat_id_str, message_id_str = callback_query.data.split("_")
+    except ValueError: await callback_query.answer("Invalid report format.", show_alert=True); return
     if REPORT_CHANNEL_ID == 0:
         await callback_query.answer("Reporting feature is disabled.", show_alert=True)
-        await callback_query.message.edit_reply_markup(None) # Remove button
-        return
-        
+        await callback_query.message.edit_reply_markup(None); return
     try:
-        # Forward the original message (the one with the failed link) to the report channel
-        await client.forward_messages(
-            chat_id=REPORT_CHANNEL_ID,
-            from_chat_id=from_chat_id,
-            message_ids=message_id_to_forward
-        )
-        
-        # Notify the user that the report was sent successfully
+        await client.forward_messages(chat_id=REPORT_CHANNEL_ID, from_chat_id=int(from_chat_id_str), message_ids=int(message_id_str))
         await callback_query.answer("Report sent successfully! Thank you for your feedback.", show_alert=True)
-        
-        # Edit the original failure message to show confirmation and remove the button
         original_text = callback_query.message.text
-        await callback_query.message.edit_text(
-            f"{original_text}\n\n✅ **Report sent to admin.**",
-            reply_markup=None # Remove the button to prevent re-reporting
-        )
-    except FloodWait as e:
-        await asyncio.sleep(e.value)
+        await callback_query.message.edit_text(f"{original_text}\n\n✅ **Report sent to admin.**", reply_markup=None)
+    except FloodWait as e: await asyncio.sleep(e.value)
     except Exception as e:
         print(f"Error forwarding report: {e}")
         await callback_query.answer("Could not send report. Maybe the bot is not an admin in the report channel?", show_alert=True)
@@ -235,7 +219,19 @@ async def link_handler(client, message):
     global DOWNLOAD_IN_PROGRESS
     if DOWNLOAD_IN_PROGRESS: await message.reply_text("🤚 **Bot is busy!** Please try again in a few minutes."); return
     url = message.text.strip()
-    if not any(site in url for site in SUPPORTED_SITES_CACHE): await message.reply_text("❌ **Sorry, this website is not supported.**\n\nUse /sites to see the full list."); return
+    
+    # --- MODIFIED BLOCK: Now adds report button to "Unsupported Site" error ---
+    if not any(site in url for site in SUPPORTED_SITES_CACHE):
+        error_text = "❌ **Sorry, this website is not supported.**\n\nUse /sites to see the full list."
+        reply_markup = None
+        if REPORT_CHANNEL_ID != 0:
+            callback_data = f"report_{message.chat.id}_{message.id}"
+            report_button = InlineKeyboardButton("🐞 Report Link", callback_data=callback_data)
+            reply_markup = InlineKeyboardMarkup([[report_button]])
+        await message.reply_text(error_text, reply_markup=reply_markup)
+        return
+    # --- END OF MODIFIED BLOCK ---
+        
     DOWNLOAD_IN_PROGRESS = True; CANCELLATION_REQUESTS.discard(user_id)
     status_message = await message.reply_text("✅ **URL received. Starting process...**", quote=True, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     try:
@@ -243,9 +239,11 @@ async def link_handler(client, message):
         else: await handle_single_video(url, message, status_message)
     except Exception as e: print(f"--- UNHANDLED ERROR IN LINK_HANDLER ---\n{traceback.format_exc()}\n--------------------"); await status_message.edit_text(f"❌ A critical error occurred: {e}")
     finally: CANCELLATION_REQUESTS.discard(user_id); DOWNLOAD_IN_PROGRESS = False
+
 async def handle_single_video(url, message, status_message):
     ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(title)s.%(ext)s'),'noplaylist':True,'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,message.from_user.id)],'max_filesize':450*1024*1024}
     await process_video_url(url, ydl_opts, message, status_message)
+
 async def handle_erome_album(url, message, status_message):
     album_limit = 10; user_id = message.from_user.id
     await status_message.edit_text("🔎 This looks like an Erome album...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
@@ -269,26 +267,20 @@ async def handle_erome_album(url, message, status_message):
             await process_video_url(entry_url, single_video_ydl_opts, message, status_message, is_album_item=True)
     if not user_id in CANCELLATION_REQUESTS: await status_message.edit_text(f"✅ Finished processing all {content_count} items!", reply_markup=None); await asyncio.sleep(5)
     await status_message.delete()
+
 async def handle_photo_download(entry, prefix, message):
     photo_url, photo_title = entry.get('url'), prefix + entry.get('title', 'Untitled Photo')
     await message.reply_photo(photo=photo_url, caption=photo_title); await asyncio.sleep(1)
 
-# --- MODIFIED: process_video_url now adds the report button on failure ---
 async def process_video_url(url, ydl_opts, original_message, status_message, is_album_item=False):
-    video_path, thumbnail_path = None, None
-    user_id = original_message.from_user.id
+    video_path, thumbnail_path = None, None; user_id = original_message.from_user.id
     download_log_id = ObjectId()
-    if downloads_collection is not None:
-        downloads_collection.insert_one({"_id": download_log_id, "user_id": user_id, "url": url, "status": "processing", "start_time": datetime.now(timezone.utc)})
-
+    if downloads_collection is not None: downloads_collection.insert_one({"_id": download_log_id, "user_id": user_id, "url": url, "status": "processing", "start_time": datetime.now(timezone.utc)})
     try:
         with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            video_title = info.get('title', 'Untitled Video')
-            if downloads_collection is not None:
-                downloads_collection.update_one({"_id": download_log_id}, {"$set": {"video_title": video_title}})
-            print(f"[{user_id}] Starting download for: {video_title}")
-            ydl.download([url])
+            info = ydl.extract_info(url, download=False); video_title = info.get('title', 'Untitled Video')
+            if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"video_title": video_title}})
+            print(f"[{user_id}] Starting download for: {video_title}"); ydl.download([url])
             list_of_files = [os.path.join(DOWNLOAD_LOCATION, f) for f in os.listdir(DOWNLOAD_LOCATION)]
             if not list_of_files: raise FileNotFoundError("Download folder is empty.")
             video_path = max(list_of_files, key=os.path.getctime)
@@ -298,42 +290,23 @@ async def process_video_url(url, ydl_opts, original_message, status_message, is_
                 r=requests.get(thumbnail_url); r.raise_for_status()
                 with Image.open(io.BytesIO(r.content)) as img: thumbnail_path = os.path.join(DOWNLOAD_LOCATION, "thumb.jpg"); img.convert("RGB").save(thumbnail_path, "jpeg")
             except Exception as e: print(f"Thumb Error: {e}"); thumbnail_path = None
-        
         await status_message.edit_text("⬆️ **Uploading to Telegram...**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
         sent_message = await app.send_video(chat_id=user_id, video=video_path, caption=f"**Title:** {video_title}\n**Source:** {info.get('webpage_url', url)}", thumb=thumbnail_path, supports_streaming=True, progress=upload_progress_callback, progress_args=(status_message, user_id))
-        
-        if downloads_collection is not None:
-            downloads_collection.update_one({"_id": download_log_id}, {"$set": {"status": "success", "end_time": datetime.now(timezone.utc), "file_size_mb": file_size_mb}})
-        if not is_album_item:
-            await status_message.edit_text("✅ **Upload complete!**", reply_markup=None)
-        if sent_message and DUMP_CHANNEL_ID != 0:
-            await sent_message.forward(DUMP_CHANNEL_ID)
-            
+        if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"status": "success", "end_time": datetime.now(timezone.utc), "file_size_mb": file_size_mb}})
+        if not is_album_item: await status_message.edit_text("✅ **Upload complete!**", reply_markup=None)
+        if sent_message and DUMP_CHANNEL_ID != 0: await sent_message.forward(DUMP_CHANNEL_ID)
     except Exception as e:
-        if "cancelled by user" in str(e):
-            user_error_message = "✅ **Operation cancelled."
-        elif "is larger than" in str(e):
-            user_error_message = "❌ **Error:** Video is too large to download."
-        else:
-            user_error_message = f"❌ **Download Failed.**\nThis could be a temporary issue. Please try again later."
-        
-        if downloads_collection is not None:
-            downloads_collection.update_one({"_id": download_log_id}, {"$set": {"status": "failed" if "cancelled" not in user_error_message else "cancelled", "end_time": datetime.now(timezone.utc), "error_message": str(e)}})
-        
+        if "cancelled by user" in str(e): user_error_message = "✅ **Operation cancelled."
+        elif "is larger than" in str(e): user_error_message = "❌ **Error:** Video is too large to download."
+        else: user_error_message = f"❌ **Download Failed.**\nThis could be a temporary issue. Please try again later."
+        if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"status": "failed" if "cancelled" not in user_error_message else "cancelled", "end_time": datetime.now(timezone.utc), "error_message": str(e)}})
         print(f"--- PROCESS_VIDEO_URL ERROR ---\n{traceback.format_exc()}\n--------------------")
-        
-        # --- MODIFIED PART ---
-        # Create a report button if the feature is enabled and it's a real failure (not a cancellation)
         reply_markup = None
         if REPORT_CHANNEL_ID != 0 and "cancelled" not in user_error_message:
-            # We pass the chat ID and the original message ID (the one with the link)
             callback_data = f"report_{original_message.chat.id}_{original_message.id}"
             report_button = InlineKeyboardButton("🐞 Report Link", callback_data=callback_data)
             reply_markup = InlineKeyboardMarkup([[report_button]])
-
-        if not is_album_item:
-            await status_message.edit_text(user_error_message, reply_markup=reply_markup)
-            
+        if not is_album_item: await status_message.edit_text(user_error_message, reply_markup=reply_markup)
     finally:
         if video_path and os.path.exists(video_path): os.remove(video_path)
         if thumbnail_path and os.path.exists(thumbnail_path): os.remove(thumbnail_path)
