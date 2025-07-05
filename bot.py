@@ -1,3 +1,5 @@
+# Bot.py
+
 import os
 import time
 import requests
@@ -25,13 +27,14 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
 DOWNLOAD_LOCATION = "./downloads/"
+ADMIN_ID = int(os.environ.get("ADMIN_ID")) # --- NEW --- Admin User ID
 
 # --- Start Message Configuration (EDIT THESE) ---
 START_PHOTO_URL = "https://telegra.ph/Wow-07-03-5"
 MAINTAINED_BY_URL = "https://t.me/Rexonblood" # CHANGE THIS to your Telegram profile link
 
-# --- Expanded List of Supported Sites ---
-SUPPORTED_SITES = [
+# --- MODIFIED: This is now the INITIAL list for the database ---
+INITIAL_SUPPORTED_SITES = [
     # A-F
     "rock.porn", "hdsex.org", "beeg.com", "bravotube.net", "camwhores.tv", "camsoda.com", "chaturbate.com",
     "desitube.com", "drporn.com", "dtube.video", "e-hentai.org", "empflix.com", "eporner.com", "erome.com",
@@ -55,29 +58,60 @@ FORCE_SUB_CHANNEL = "@dailynewswalla"
 # --- State Management & Other Setups ---
 DOWNLOAD_IN_PROGRESS = False
 CANCELLATION_REQUESTS = set()
+SUPPORTED_SITES_CACHE = set() # --- NEW: In-memory cache for sites from DB
 server = Flask(__name__)
 @server.route('/')
 def health_check(): return "Bot and Web Server are alive!", 200
 def run_server(): server.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+
+# --- MODIFIED: Database Setup ---
 try:
     db_client = MongoClient(MONGO_URI)
     db = db_client.get_database("VideoBotDB")
     users_collection = db.get_collection("users")
     downloads_collection = db.get_collection("downloads_history")
+    config_collection = db.get_collection("config") # --- NEW: Collection for bot settings
     print("Successfully connected to MongoDB.")
 except Exception as e:
-    print(f"Error connecting to MongoDB: {e}"); users_collection=None; downloads_collection=None
+    print(f"Error connecting to MongoDB: {e}")
+    users_collection=None; downloads_collection=None; config_collection=None
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# --- NEW: Function to load sites from DB on startup ---
+def initialize_supported_sites():
+    global SUPPORTED_SITES_CACHE
+    if config_collection is None:
+        print("MongoDB not connected. Falling back to initial site list.")
+        SUPPORTED_SITES_CACHE = set(INITIAL_SUPPORTED_SITES)
+        return
+
+    sites_doc = config_collection.find_one({"_id": "supported_sites"})
+    if sites_doc:
+        SUPPORTED_SITES_CACHE = set(sites_doc.get("sites", []))
+        print(f"Loaded {len(SUPPORTED_SITES_CACHE)} supported sites from DB.")
+    else:
+        # If the document doesn't exist, create it with the initial list
+        print("No site list found in DB. Initializing with default list...")
+        config_collection.insert_one({
+            "_id": "supported_sites",
+            "sites": INITIAL_SUPPORTED_SITES
+        })
+        SUPPORTED_SITES_CACHE = set(INITIAL_SUPPORTED_SITES)
+        print(f"Saved {len(SUPPORTED_SITES_CACHE)} sites to DB.")
 
 # --- Helper Functions ---
 def create_progress_bar(percentage):
     bar_length=10; filled_length=int(bar_length*percentage//100)
     return '🟢'*filled_length+'⚪'*(bar_length-filled_length)
 
-# --- NEW: Helper function to generate the sites list text (for code reuse) ---
+# --- MODIFIED: Helper function now uses the cache ---
 def get_sites_list_text():
     reply_text = "✅ **Here are the currently supported sites:**\n\n```\n"
-    sorted_sites = sorted(list(set(SUPPORTED_SITES)))
+    # Use the cache instead of the old hardcoded list
+    sorted_sites = sorted(list(SUPPORTED_SITES_CACHE))
+    if not sorted_sites:
+        return "❌ No supported sites found. The admin needs to add some!"
+
     num_sites = len(sorted_sites)
     sites_per_column = (num_sites + 2) // 3
     columns = [sorted_sites[i:i + sites_per_column] for i in range(0, num_sites, sites_per_column)]
@@ -114,7 +148,7 @@ async def start_command(client, message):
     except Exception as e:
         print(f"Error during force sub check: {e}")
         await message.reply_text("An error occurred while checking your membership status. Please ensure the bot is an admin in the channel."); return
-    
+
     u = message.from_user
     if users_collection is not None:
         ud={"_id":u.id,"first_name":u.first_name,"last_name":u.last_name,"username":u.username,"last_started":datetime.now(timezone.utc)}
@@ -126,11 +160,10 @@ async def start_command(client, message):
         "📥 **I CAN DOWNLOAD VIDEOS FROM:**\n"
         "• YOUTUBE, INSTAGRAM, TIKTOK\n"
         "• PORNHUB, XVIDEOS, XNXX\n"
-        "• AND 1000+ OTHER SITES!\n\n"
+        "• AND MANY OTHER SITES!\n\n" # MODIFIED text
         "🚀 **JUST SEND ME A LINK!**"
     )
 
-    # MODIFIED: Keyboard now uses a callback button for sites
     keyboard = InlineKeyboardMarkup(
         [[
             InlineKeyboardButton("• SUPPORTED SITES", callback_data="show_sites_list"),
@@ -141,18 +174,71 @@ async def start_command(client, message):
 
 @app.on_message(filters.command("sites") & filters.private)
 async def sites_command(client, message):
-    # This command now uses the helper function
     sites_text = get_sites_list_text()
     await message.reply_text(sites_text)
 
-# --- NEW: Callback handler for the "SUPPORTED SITES" button ---
+# --- NEW: Admin Commands ---
+admin_filter = filters.user(ADMIN_ID) & filters.private
+
+@app.on_message(filters.command("addsite") & admin_filter)
+async def add_site_command(client, message):
+    if config_collection is None:
+        await message.reply_text("❌ Database not connected. Cannot modify site list."); return
+    
+    try:
+        site_to_add = message.text.split(maxsplit=1)[1].strip().lower()
+        if not site_to_add:
+             await message.reply_text("⚠️ Please provide a site domain. Usage: `/addsite example.com`"); return
+    except IndexError:
+        await message.reply_text("⚠️ Usage: `/addsite example.com`"); return
+
+    # Use $addToSet to add the site only if it doesn't already exist
+    result = config_collection.update_one(
+        {"_id": "supported_sites"},
+        {"$addToSet": {"sites": site_to_add}}
+    )
+
+    if result.matched_count == 0:
+         await message.reply_text("❌ Critical error: Site list document not found in DB."); return
+         
+    if result.modified_count > 0:
+        SUPPORTED_SITES_CACHE.add(site_to_add) # Update cache
+        await message.reply_text(f"✅ **Success!** `{site_to_add}` has been added to the supported sites list.")
+    else:
+        await message.reply_text(f"ℹ️ `{site_to_add}` is already in the supported sites list.")
+
+@app.on_message(filters.command("delsite") & admin_filter)
+async def del_site_command(client, message):
+    if config_collection is None:
+        await message.reply_text("❌ Database not connected. Cannot modify site list."); return
+
+    try:
+        site_to_remove = message.text.split(maxsplit=1)[1].strip().lower()
+        if not site_to_remove:
+            await message.reply_text("⚠️ Please provide a site domain. Usage: `/delsite example.com`"); return
+    except IndexError:
+        await message.reply_text("⚠️ Usage: `/delsite example.com`"); return
+
+    # Use $pull to remove the site from the array
+    result = config_collection.update_one(
+        {"_id": "supported_sites"},
+        {"$pull": {"sites": site_to_remove}}
+    )
+
+    if result.matched_count == 0:
+         await message.reply_text("❌ Critical error: Site list document not found in DB."); return
+
+    if result.modified_count > 0:
+        SUPPORTED_SITES_CACHE.discard(site_to_remove) # Update cache
+        await message.reply_text(f"✅ **Success!** `{site_to_remove}` has been removed from the supported sites list.")
+    else:
+        await message.reply_text(f"ℹ️ `{site_to_remove}` was not found in the supported sites list.")
+
+
 @app.on_callback_query(filters.regex("^show_sites_list$"))
 async def show_sites_handler(client, callback_query):
-    # Get the formatted text from the helper function
     sites_text = get_sites_list_text()
-    # Acknowledge the button press
     await callback_query.answer()
-    # Send the list as a new message
     await callback_query.message.reply_text(sites_text)
 
 @app.on_callback_query(filters.regex("^cancel_"))
@@ -163,7 +249,7 @@ async def cancel_handler(client, callback_query):
     await callback_query.answer("Cancellation request sent.", show_alert=False)
     await callback_query.message.edit_text("🤚 **Cancellation requested...** Please wait.")
 
-# The rest of your code is unchanged and correct. I've collapsed it for brevity.
+# --- MODIFIED: The link handler now uses the cache ---
 @app.on_message(filters.private & filters.regex(r"https?://[^\s]+"))
 async def link_handler(client, message):
     user_id = message.from_user.id
@@ -174,10 +260,15 @@ async def link_handler(client, message):
         join_button = InlineKeyboardMarkup([[InlineKeyboardButton("Join Our Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])
         await message.reply_text("To use this bot, you must join our channel. After joining, please send the link again.", reply_markup=join_button); return
     except Exception as e: print(f"Error during force sub check: {e}"); await message.reply_text("An error occurred while checking your membership status. Please ensure the bot is an admin in the channel."); return
+    
     global DOWNLOAD_IN_PROGRESS
     if DOWNLOAD_IN_PROGRESS: await message.reply_text("🤚 **Bot is busy!** Please try again in a few minutes."); return
+    
     url = message.text.strip()
-    if not any(site in url for site in SUPPORTED_SITES): await message.reply_text("❌ **Sorry, this website is not supported.**\n\nUse /sites to see the full list."); return
+    # Use the cache for the check
+    if not any(site in url for site in SUPPORTED_SITES_CACHE): 
+        await message.reply_text("❌ **Sorry, this website is not supported.**\n\nUse /sites to see the full list."); return
+        
     DOWNLOAD_IN_PROGRESS = True; CANCELLATION_REQUESTS.discard(user_id)
     status_message = await message.reply_text("✅ **URL received. Starting process...**", quote=True, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     try:
@@ -185,6 +276,9 @@ async def link_handler(client, message):
         else: await handle_single_video(url, message, status_message)
     except Exception as e: print(f"--- UNHANDLED ERROR IN LINK_HANDLER ---\n{traceback.format_exc()}\n--------------------"); await status_message.edit_text(f"❌ A critical error occurred: {e}")
     finally: CANCELLATION_REQUESTS.discard(user_id); DOWNLOAD_IN_PROGRESS = False
+
+# --- The rest of your code remains unchanged. ---
+
 async def handle_single_video(url, message, status_message):
     ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(title)s.%(ext)s'),'noplaylist':True,'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,message.from_user.id)],'max_filesize':450*1024*1024}
     await process_video_url(url, ydl_opts, message, status_message)
@@ -253,6 +347,8 @@ async def process_video_url(url, ydl_opts, original_message, status_message, is_
             except Exception: pass
 if __name__ == "__main__":
     if not os.path.exists(DOWNLOAD_LOCATION): os.makedirs(DOWNLOAD_LOCATION)
+    # --- NEW: Initialize sites on startup ---
+    initialize_supported_sites()
     print("Starting web server thread...")
     threading.Thread(target=run_server, daemon=True).start()
     print("Starting Pyrogram bot...")
