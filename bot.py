@@ -1,4 +1,4 @@
-# Bot.py (Reverted to original Erome logic with de-duplication fix)
+# Bot.py (Final version with correct Erome photo/video identification)
 
 import os
 import time
@@ -281,6 +281,7 @@ async def handle_erome_album(url, message, status_message):
     user_id = message.from_user.id
     await status_message.edit_text("🔎 This looks like an Erome album...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     
+    # Use 'extract_flat' for speed, then de-duplicate based on ID.
     meta_opts = {'extract_flat': True, 'quiet': True, 'playlistend': album_limit}
     
     with YoutubeDL(meta_opts) as ydl:
@@ -300,8 +301,15 @@ async def handle_erome_album(url, message, status_message):
         await status_message.edit_text("❌ No content found in this Erome album."); return
     
     content_count = len(content_to_process)
+    
+    # Correctly count photos and videos AFTER de-duplication
+    photo_count = sum(1 for item in content_to_process if item.get('vcodec') == 'none')
+    video_count = content_count - photo_count
+
     await status_message.edit_text(
-        f"✅ Album found with **{content_count}** unique items (limit {album_limit}). Processing...",
+        f"✅ Album found with **{content_count}** unique items (limit {album_limit}).\n"
+        f"🖼️ Photos: `{photo_count}` | 📹 Videos: `{video_count}`\n"
+        f"Processing now...",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     await asyncio.sleep(2)
 
@@ -311,7 +319,8 @@ async def handle_erome_album(url, message, status_message):
         
         entry_url = entry.get('url')
         
-        if any(entry_url.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp']):
+        # Use the more reliable vcodec check to determine media type
+        if entry.get('vcodec') == 'none':
             await handle_photo_download(entry, f"[{i}/{content_count}] ", message)
         else:
             ydl_opts = {
