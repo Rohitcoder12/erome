@@ -1,4 +1,4 @@
-# Bot.py (Final version with Admin Panel and /help command)
+# Bot.py (with improved Erome album handling)
 
 import os
 import time
@@ -92,11 +92,9 @@ def initialize_supported_sites():
         SUPPORTED_SITES_CACHE = set(sites_doc.get("sites", [])); print(f"Loaded {len(SUPPORTED_SITES_CACHE)} supported sites from DB.")
     else:
         print("No site list found in DB. Initializing with default list..."); config_collection.insert_one({"_id": "supported_sites", "sites": INITIAL_SUPPORTED_SITES}); SUPPORTED_SITES_CACHE = set(INITIAL_SUPPORTED_SITES); print(f"Saved {len(SUPPORTED_SITES_CACHE)} sites to DB.")
-
 def create_progress_bar(percentage):
     bar_length=10; filled_length=int(bar_length*percentage//100)
     return '🟢'*filled_length+'⚪'*(bar_length-filled_length)
-
 def get_sites_list_text():
     reply_text = "✅ **Here are the currently supported sites:**\n\n```\n"
     sorted_sites = sorted(list(SUPPORTED_SITES_CACHE))
@@ -105,7 +103,6 @@ def get_sites_list_text():
     columns = [sorted_sites[i:i + sites_per_column] for i in range(0, num_sites, sites_per_column)]
     for row in zip_longest(*columns, fillvalue=""): reply_text += f"{row[0]:<25}{row[1]:<25}{row[2]:<25}\n"
     reply_text += "```"; return reply_text
-
 def progress_hook(d, m, user_id):
     if user_id in CANCELLATION_REQUESTS: raise Exception("Download cancelled by user.")
     if d['status']=='downloading' and (total_bytes := d.get('total_bytes') or d.get('total_bytes_estimate')):
@@ -113,7 +110,6 @@ def progress_hook(d, m, user_id):
         if(time.time()-globals().get('last_update_time',0))>2:
             try:asyncio.create_task(m.edit_text(f"⏳ **Downloading...**\n{create_progress_bar(p)} {p:.2f}% [{db_bytes/(1024*1024):.1f}MB]", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]])));globals()['last_update_time']=time.time()
             except:pass
-
 async def upload_progress_callback(c, t, m, user_id):
     if user_id in CANCELLATION_REQUESTS: raise Exception("Upload cancelled by user.")
     p=c/t*100
@@ -140,40 +136,18 @@ async def start_command(client, message):
     start_text = ("» **I'M RX Downloader BOT**\n\n📥 **I CAN DOWNLOAD VIDEOS FROM:**\n• YOUTUBE, INSTAGRAM, TIKTOK\n• PORNHUB, XVIDEOS, XNXX\n• AND MANY OTHER SITES!\n\n🚀 **JUST SEND ME A LINK!**")
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("• SUPPORTED SITES", callback_data="show_sites_list"), InlineKeyboardButton("• MAINTAINED BY", url=MAINTAINED_BY_URL)]])
     await message.reply_photo(photo=START_PHOTO_URL, caption=start_text, reply_markup=keyboard)
-
 @app.on_message(filters.command("sites") & filters.private)
 async def sites_command(client, message):
     sites_text = get_sites_list_text(); await message.reply_text(sites_text)
 
 # --- Admin Panel Section ---
 admin_filter = filters.user(ADMIN_ID) & filters.private
-
 @app.on_message(filters.command("help") & filters.private)
 async def help_command(client, message):
-    user_help_text = """
-**Here's how to use me:**
-
-/start - Start the bot.
-/sites - See all supported websites.
-/help - Show this help message.
-
-➡️ Just send me a link to a video from a supported site and I'll download it for you!
-    """
-
-    admin_help_text = """
---- **Admin Commands** ---
-/stats - Get bot usage statistics.
-/users - See the 10 most recent users.
-/broadcast <msg> - Send a message to all users.
-/addsite <domain> - Add a new supported site.
-/delsite <domain> - Remove a supported site.
-    """
-
-    if message.from_user.id == ADMIN_ID:
-        await message.reply_text(user_help_text + admin_help_text)
-    else:
-        await message.reply_text(user_help_text)
-
+    user_help_text = """**Here's how to use me:**\n\n/start - Start the bot.\n/sites - See all supported websites.\n/help - Show this help message.\n\n➡️ Just send me a link to a video from a supported site and I'll download it for you!"""
+    admin_help_text = """\n\n--- **Admin Commands** ---\n/stats - Get bot usage statistics.\n/users - See the 10 most recent users.\n/broadcast <msg> - Send a message to all users.\n/addsite <domain> - Add a new supported site.\n/delsite <domain> - Remove a supported site."""
+    if message.from_user.id == ADMIN_ID: await message.reply_text(user_help_text + admin_help_text)
+    else: await message.reply_text(user_help_text)
 @app.on_message(filters.command("stats") & admin_filter)
 async def stats_command(client, message):
     if users_collection is None or downloads_collection is None: await message.reply_text("❌ Database not connected. Cannot fetch stats."); return
@@ -186,7 +160,6 @@ async def stats_command(client, message):
     downloads_today = downloads_collection.count_documents({"start_time": {"$gte": twenty_four_hours_ago}})
     stats_text = f"""📊 **Bot Statistics** 📊\n\n👤 **Users:**\n- **Total Users:** `{total_users}`\n\n📥 **Downloads:**\n- **Total Processed:** `{total_downloads}`\n- **Successful:** `{successful_downloads}`\n- **Failed/Cancelled:** `{failed_downloads}`\n- **In Last 24 Hours:** `{downloads_today}`"""
     await message.reply_text(stats_text, quote=True)
-
 @app.on_message(filters.command("broadcast") & admin_filter)
 async def broadcast_command(client, message):
     if users_collection is None: await message.reply_text("❌ Database not connected. Cannot fetch users."); return
@@ -216,7 +189,6 @@ async def broadcast_command(client, message):
             await status_msg.edit_text(f"📣 **Broadcasting...**\n- Processed: `{i + 1}/{total_users}`\n- Successful: `{success_count}`\n- Failed: `{failed_count}`\n- Time: `{elapsed_time}s`")
     elapsed_time = round(time.time() - start_time)
     await status_msg.edit_text(f"✅ **Broadcast Complete!**\n\n- Sent to: `{success_count}` users\n- Failed for: `{failed_count}` users\n- Total time: `{elapsed_time}` seconds.")
-
 @app.on_message(filters.command("users") & admin_filter)
 async def get_users_command(client, message):
     if users_collection is None: await message.reply_text("❌ Database not connected. Cannot fetch users."); return
@@ -231,7 +203,6 @@ async def get_users_command(client, message):
         users_list_text += f"**{user_count}.** `{user_id}`\n   - **Name:** {first_name}\n   - **Username:** {username}\n   - **Last Start:** {last_started} UTC\n"
     if user_count == 0: await message.reply_text("No users found in the database yet.")
     else: await message.reply_text(users_list_text, quote=True)
-
 @app.on_message(filters.command("addsite") & admin_filter)
 async def add_site_command(client, message):
     if config_collection is None: await message.reply_text("❌ Database not connected."); return
@@ -240,7 +211,6 @@ async def add_site_command(client, message):
     result = config_collection.update_one({"_id": "supported_sites"}, {"$addToSet": {"sites": site_to_add}})
     if result.modified_count > 0: SUPPORTED_SITES_CACHE.add(site_to_add); await message.reply_text(f"✅ **Success!** `{site_to_add}` has been added.")
     else: await message.reply_text(f"ℹ️ `{site_to_add}` is already in the list.")
-
 @app.on_message(filters.command("delsite") & admin_filter)
 async def del_site_command(client, message):
     if config_collection is None: await message.reply_text("❌ Database not connected."); return
@@ -269,7 +239,9 @@ async def report_link_handler(client, callback_query):
         await callback_query.answer("Report sent successfully! Thank you.", show_alert=True)
         await callback_query.message.edit_text(f"{callback_query.message.text}\n\n✅ **Report sent to admin.**", reply_markup=None)
     except FloodWait as e: await asyncio.sleep(e.value)
-    except Exception as e: print(f"Error forwarding report: {e}"); await callback_query.answer("Could not send report.", show_alert=True)
+    except Exception as e:
+        print(f"--- ERROR IN REPORT HANDLER ---\n{traceback.format_exc()}\n--------------------")
+        await callback_query.answer("Could not send report.", show_alert=True)
 
 # --- Core Logic Handlers ---
 @app.on_message(filters.private & filters.regex(r"https?://[^\s]+"))
@@ -304,46 +276,76 @@ async def handle_single_video(url, message, status_message):
     ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(title)s.%(ext)s'),'noplaylist':True,'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,message.from_user.id)],'max_filesize':450*1024*1024}
     await process_video_url(url, ydl_opts, message, status_message)
 
+# --- NEW: Improved Erome album handler ---
 async def handle_erome_album(url, message, status_message):
-    album_limit = 10; user_id = message.from_user.id
-    await status_message.edit_text("🔎 This looks like an Erome album...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
-    meta_opts = {'extract_flat': True, 'quiet': True, 'playlistend': album_limit}
-    with YoutubeDL(meta_opts) as ydl: info = ydl.extract_info(url, download=False)
-    original_entries, content_to_process, seen_filenames = info.get('entries', []), [], set()
-    for entry in original_entries:
-        filename = entry.get('url', '').split('/')[-1]
-        if filename and filename not in seen_filenames: content_to_process.append(entry); seen_filenames.add(filename)
-    if not content_to_process: await status_message.edit_text("❌ No content found in this Erome album."); return
+    album_limit = 10
+    user_id = message.from_user.id
+    await status_message.edit_text(
+        "🔎 **Erome album detected.**\nPerforming a deep scan, this may take a moment...",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+    meta_opts = {'quiet': True, 'playlistend': album_limit}
+    try:
+        with YoutubeDL(meta_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as e:
+        print(f"Erome deep scan failed: {e}")
+        await status_message.edit_text("❌ Could not extract album information. The album might be private or deleted."); return
+    if not info or 'entries' not in info or not info['entries']:
+        await status_message.edit_text("❌ No downloadable content found in this Erome album."); return
+    content_to_process = info['entries']
     content_count = len(content_to_process)
-    await status_message.edit_text(f"✅ Album found with **{content_count}** unique items (limit {album_limit}). Processing...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
+    photo_count = sum(1 for entry in content_to_process if entry.get('vcodec') == 'none' or (entry.get('url') and any(entry['url'].endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp'])))
+    video_count = content_count - photo_count
+    await status_message.edit_text(
+        f"✅ **Album scan complete!**\n\n"
+        f"🖼️ Photos found: `{photo_count}`\n"
+        f"📹 Videos found: `{video_count}`\n\n"
+        f"Processing up to {album_limit} items...",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
     await asyncio.sleep(2)
     for i, entry in enumerate(content_to_process, 1):
         if user_id in CANCELLATION_REQUESTS:
             await status_message.edit_text("✅ **Album processing cancelled.**"); break
-        entry_url = entry['url']
-        if any(entry_url.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp']):
+        entry_url = entry.get('webpage_url') or entry.get('url')
+        if entry.get('vcodec') == 'none' or any(entry_url.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp']):
             await handle_photo_download(entry, f"[{i}/{content_count}] ", message)
         else:
             ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,f"album_item_{i}_%(title)s.%(ext)s"),'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,user_id)],'max_filesize':450*1024*1024}
             await status_message.edit_text(f"Downloading video **{i}/{content_count}**...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
-            await process_video_url(entry_url, ydl_opts, message, status_message, is_album_item=True)
-    if not user_id in CANCELLATION_REQUESTS: await status_message.edit_text(f"✅ Finished processing all {content_count} items!", reply_markup=None); await asyncio.sleep(5)
-    try: await status_message.delete()
-    except: pass
+            await process_video_url(entry, ydl_opts, message, status_message, is_album_item=True)
+    if user_id not in CANCELLATION_REQUESTS:
+        await status_message.edit_text(f"✅ Finished processing all {content_count} items!", reply_markup=None)
+        await asyncio.sleep(5)
+    try:
+        await status_message.delete()
+    except Exception:
+        pass
 
 async def handle_photo_download(entry, prefix, message):
     photo_url, photo_title = entry.get('url'), prefix + entry.get('title', 'Untitled Photo')
     await message.reply_photo(photo=photo_url, caption=photo_title); await asyncio.sleep(1)
 
-async def process_video_url(url, ydl_opts, original_message, status_message, is_album_item=False):
+# --- MODIFIED: process_video_url signature updated ---
+async def process_video_url(url_or_info, ydl_opts, original_message, status_message, is_album_item=False):
     video_path, thumbnail_path = None, None; user_id = original_message.from_user.id
     download_log_id = ObjectId()
+    
+    # Check if we were passed a URL string or a pre-extracted info dictionary
+    is_info_dict = isinstance(url_or_info, dict)
+    url = url_or_info.get('webpage_url') if is_info_dict else url_or_info
+    
     if downloads_collection is not None: downloads_collection.insert_one({"_id": download_log_id, "user_id": user_id, "url": url, "status": "processing", "start_time": datetime.now(timezone.utc)})
     try:
         with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False); video_title = info.get('title', 'Untitled Video')
+            # If we already have the info, don't re-extract it.
+            info = url_or_info if is_info_dict else ydl.extract_info(url, download=False)
+            video_title = info.get('title', 'Untitled Video')
             if downloads_collection is not None: downloads_collection.update_one({"_id": download_log_id}, {"$set": {"video_title": video_title}})
-            print(f"[{user_id}] Starting download for: {video_title}"); ydl.download([url])
+            
+            print(f"[{user_id}] Starting download for: {video_title}")
+            # Pass the full info dict for efficiency if we have it
+            ydl.download([info if is_info_dict else url])
+            
             list_of_files = [os.path.join(DOWNLOAD_LOCATION, f) for f in os.listdir(DOWNLOAD_LOCATION)]
             if not list_of_files: raise FileNotFoundError("Download folder is empty.")
             video_path = max(list_of_files, key=os.path.getctime)
