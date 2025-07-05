@@ -5,7 +5,6 @@ import asyncio
 import threading
 import traceback
 import io
-import base64
 from itertools import zip_longest
 from yt_dlp import YoutubeDL
 from pyrogram import Client, filters
@@ -26,12 +25,12 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 DUMP_CHANNEL_ID = int(os.environ.get("DUMP_CHANNEL_ID", 0))
 DOWNLOAD_LOCATION = "./downloads/"
-OWNER_ID = int(os.environ.get("OWNER_ID"))
-REPORT_CHANNEL_ID = int(os.environ.get("REPORT_CHANNEL_ID"))
+OWNER_ID = int(os.environ.get("OWNER_ID")) 
 START_PHOTO_URL = "https://telegra.ph/Wow-07-03-5"
 MAINTAINED_BY_URL = "https://t.me/Rexonblood"
 FORCE_SUB_CHANNEL = "@dailynewswalla"
 
+# --- Default Supported Sites (Used only if DB is empty) ---
 DEFAULT_SITES = [
     "rock.porn", "hdsex.org", "beeg.com", "bravotube.net", "camwhores.tv", "camsoda.com", "chaturbate.com",
     "desitube.com", "drporn.com", "dtube.video", "e-hentai.org", "empflix.com", "eporner.com", "erome.com",
@@ -56,10 +55,10 @@ try:
     sites_collection = db.get_collection("supported_sites"); print("Successfully connected to MongoDB.")
 except Exception as e: print(f"Error connecting to MongoDB: {e}"); db_client = None
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-web_server = Flask(__name__)
+server = Flask(__name__)
 
-@web_server.route('/')
-def health_check(): return "Bot is alive!", 200
+@server.route('/')
+def health_check(): return "Bot and Web Server are alive!", 200
 
 def create_progress_bar(percentage):
     bar_length=10; filled_length=int(bar_length*percentage//100)
@@ -78,23 +77,34 @@ def progress_hook(d, m, user_id):
     if d['status']=='downloading' and (total_bytes := d.get('total_bytes') or d.get('total_bytes_estimate')):
         p=(db:=d.get('downloaded_bytes'))/total_bytes*100
         if(time.time()-globals().get('last_update_time',0))>2:
-            try:asyncio.create_task(m.edit_text(f"⏳ Downloading... {p:.1f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]])));globals()['last_update_time']=time.time()
+            try:asyncio.create_task(m.edit_text(f"⏳ **Downloading...**\n{create_progress_bar(p)} {p:.2f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]])));globals()['last_update_time']=time.time()
             except:pass
 async def upload_progress_callback(c, t, m, user_id):
     if user_id in CANCELLATION_REQUESTS: raise Exception("Upload cancelled by user.")
     p=c/t*100
     if(time.time()-globals().get('last_upload_update_time',0))>2:
-        try:await m.edit_text(f"⏫ Uploading... {p:.1f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]));globals()['last_upload_update_time']=time.time()
+        try:await m.edit_text(f"⏫ **Uploading...**\n{create_progress_bar(p)} {p:.2f}%", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]));globals()['last_upload_update_time']=time.time()
         except:pass
 
+# --- CORRECTED START COMMAND ---
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     try:
-        await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=message.from_user.id)
+        member = await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=message.from_user.id)
+        if member.status in [ChatMemberStatus.BANNED, ChatMemberStatus.RESTRICTED]:
+            await message.reply_text("You are banned from using this bot."); return
     except UserNotParticipant:
         await message.reply_text("Join our channel to use me.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL.lstrip('@')}")]])); return
-    except Exception: pass
-    if users_collection: users_collection.update_one({"_id":message.from_user.id},{"$set":{"first_name":message.from_user.first_name,"last_name":message.from_user.last_name,"username":message.from_user.username}},upsert=True)
+    except Exception as e:
+        print(f"Force sub check failed for user {message.from_user.id}: {e}")
+        await message.reply_text("An error occurred checking your membership status. Please ensure the bot is an admin in the channel and try again."); return
+
+    # --- FIX: Check if users_collection is valid before using it ---
+    if users_collection is not None:
+        ud={"_id":message.from_user.id,"first_name":message.from_user.first_name,"last_name":message.from_user.last_name,"username":message.from_user.username}
+        try: users_collection.update_one({"_id":message.from_user.id},{"$set":ud},upsert=True)
+        except Exception as e: print(f"DB Error on start: {e}")
+        
     start_text = ("» **I'M RX Downloader BOT**\n\n" + "📥 **I CAN DOWNLOAD VIDEOS FROM:**\n" + "• YOUTUBE, INSTAGRAM, TIKTOK\n" + "• PORNHUB, XVIDEOS, XNXX\n" + "• AND 1000+ OTHER SITES!\n\n" + "🚀 **JUST SEND ME A LINK!**")
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("• SUPPORTED SITES", callback_data="show_sites_list"), InlineKeyboardButton("• MAINTAINED BY", url=MAINTAINED_BY_URL)]])
     await message.reply_photo(photo=START_PHOTO_URL, caption=start_text, reply_markup=keyboard)
@@ -122,27 +132,14 @@ async def del_site_command(client, message):
 
 @app.on_callback_query(filters.regex("^show_sites_list$"))
 async def show_sites_handler(client, c_q): await c_q.answer(); await c_q.message.reply_text(get_sites_list_text())
-@app.on_callback_query(filters.regex("^report_"))
-async def report_link_handler(client, c_q):
-    try:
-        encoded_url = c_q.data.split("_", 1)[1]
-        missing_padding = len(encoded_url) % 4
-        if missing_padding: encoded_url += '=' * (4 - missing_padding)
-        url = base64.urlsafe_b64decode(encoded_url).decode('utf-8')
-        await client.send_message(REPORT_CHANNEL_ID, f"🚨 **Link Report**\n\n**User:** {c_q.from_user.mention} (`{c_q.from_user.id}`)\n**URL:** `{url}`")
-        await c_q.answer("✅ Thank you! The link has been reported.", show_alert=True)
-        await c_q.edit_message_reply_markup(None)
-    except Exception as e: print(f"Report error: {e}"); await c_q.answer("Could not send report.", show_alert=True)
 @app.on_callback_query(filters.regex("^cancel_"))
 async def cancel_handler(client, c_q):
-    user_id = int(c_q.data.split("_")[1])
+    user_id = int(c_q.data.split("_")[1]);
     if c_q.from_user.id != user_id: await c_q.answer("This is not for you!", show_alert=True); return
     CANCELLATION_REQUESTS.add(user_id); await c_q.answer("Cancellation request sent.", show_alert=False); await c_q.message.edit_text("🤚 **Cancellation requested...**")
 
-# --- CORRECTED FINAL HANDLER for all other private text messages ---
-@app.on_message(filters.private & filters.text)
+@app.on_message(filters.private & filters.text & ~filters.command())
 async def link_handler(client, message):
-    # This handler will NOT catch commands, because they are handled by the specific handlers above.
     user_id = message.from_user.id
     try:
         await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
@@ -152,7 +149,7 @@ async def link_handler(client, message):
     global DOWNLOAD_IN_PROGRESS
     if DOWNLOAD_IN_PROGRESS: await message.reply_text("🤚 **Bot is busy!**"); return
     url = message.text.strip()
-    if not url.startswith(('http://', 'https://')): await message.reply_text("Please send a valid link or use /start."); return
+    if not url.startswith(('http://', 'https://')): await message.reply_text("Please send a valid link."); return
     if not any(site in url for site in SITES_LIST): await message.reply_text("❌ **Sorry, this site is not supported.**\nUse /sites to check."); return
     DOWNLOAD_IN_PROGRESS = True; CANCELLATION_REQUESTS.discard(user_id)
     status_msg = await message.reply_text("✅ **URL received, starting...**", quote=True, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{user_id}")]]))
@@ -191,7 +188,10 @@ async def handle_erome_album(url, message, status_message):
 
 async def process_video_url(url, ydl_opts_override, original_message, status_message, is_album_item=False):
     video_path, thumbnail_path = None, None; user_id = original_message.from_user.id
-    if downloads_collection: downloads_collection.insert_one({"user_id": user_id, "url": url, "status": "processing"})
+    # --- FIX: Check for DB connection correctly ---
+    if downloads_collection is not None:
+        downloads_collection.insert_one({"user_id": user_id, "url": url, "status": "processing"})
+        
     ydl_opts = {'format':'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best','outtmpl':os.path.join(DOWNLOAD_LOCATION,'%(id)s.%(ext)s'),'noplaylist':True,'quiet':True,'progress_hooks':[lambda d:progress_hook(d,status_message,user_id)],'max_filesize':450*1024*1024}
     ydl_opts.update(ydl_opts_override)
     try:
@@ -211,14 +211,11 @@ async def process_video_url(url, ydl_opts_override, original_message, status_mes
         if not is_album_item: await status_message.edit_text("✅ **Upload complete!**", reply_markup=None)
         if sent_message and DUMP_CHANNEL_ID != 0: await sent_message.forward(DUMP_CHANNEL_ID)
     except Exception as e:
-        error_message = f"❌ An error occurred: {type(e).__name__}"; report_markup = None
+        error_message = f"❌ An error occurred: {type(e).__name__}"
         if "cancelled by user" in str(e): error_message = "✅ **Operation cancelled."
-        else:
-            if "is larger than" in str(e): error_message = "❌ **Error:** Video is too large."
-            encoded_url = base64.urlsafe_b64encode(url.encode()).decode()
-            report_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🚨 Report Link", callback_data=f"report_{encoded_url}")]])
+        elif "is larger than" in str(e): error_message = "❌ **Error:** Video is too large."
         print(f"--- PROCESS_VIDEO_URL ERROR ---\n{traceback.format_exc()}\n---")
-        if not is_album_item: await status_message.edit_text(error_message, reply_markup=report_markup)
+        if not is_album_item: await status_message.edit_text(error_message) # No report button
     finally:
         if video_path and os.path.exists(video_path): os.remove(video_path)
         if thumbnail_path and os.path.exists(thumbnail_path): os.remove(thumbnail_path)
@@ -239,14 +236,16 @@ def load_sites_from_db():
         print(f"Loaded {len(SITES_LIST)} supported sites.")
     except Exception as e: print(f"DB Error loading sites: {e}"); SITES_LIST = DEFAULT_SITES
 
-# --- Main Entry Point (Stable and Correct) ---
+def run_web_server():
+    server.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+
 if __name__ == "__main__":
     if not os.path.exists(DOWNLOAD_LOCATION):
         os.makedirs(DOWNLOAD_LOCATION)
     
     load_sites_from_db()
     
-    threading.Thread(target=lambda: web_server.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000))), daemon=True).start()
+    threading.Thread(target=run_web_server, daemon=True).start()
     
     print("Starting Pyrogram bot...")
     app.run()
